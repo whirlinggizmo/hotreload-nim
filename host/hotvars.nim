@@ -8,6 +8,10 @@
 ## A type change is found from the type itself (typeSig): fields, their types, and the
 ## types inside those, not the source, so a comment or a proc next to it changes nothing.
 ##
+## One that holds refs is carried over on every reload, changed or not: each library has
+## its own Nim runtime, and a ref belongs to the one that made it (its cycle collector
+## keeps track of it), so the new code gets its own copy (migrate.nim copies the graph).
+##
 ## Old code still around after a reload (a callback from before it) keeps the storage it
 ## had: after a type change that's the old copy, so what it writes there is lost, not
 ## corrupting.
@@ -18,28 +22,33 @@ when defined(hcrHost) or defined(hcrScript):
 import ./migrate
 export migrate, hashes
 
-proc sigOf(n: NimNode; seen: var seq[string]): string =
+proc sigOf(n: NimNode; seen: var seq[string]; refs: var bool): string =
   case n.kind
   of nnkSym:
     let impl = n.getTypeImpl
     case impl.kind
-    of nnkObjectTy, nnkEnumTy, nnkDistinctTy, nnkTupleTy:
+    of nnkObjectTy, nnkEnumTy, nnkDistinctTy, nnkTupleTy, nnkRefTy:
       let name = n.strVal
       if name in seen: return name
       seen.add name
-      result = name & "=" & sigOf(impl, seen)
+      result = name & "=" & sigOf(impl, seen, refs)
     of nnkBracketExpr, nnkTupleConstr:
-      result = sigOf(impl, seen)
+      result = sigOf(impl, seen, refs)
     of nnkSym:
       result = impl.strVal
     else:
       result = impl.repr
+  of nnkRefTy:
+    refs = true
+    result = "ref " & sigOf(n[0], seen, refs)
   of nnkObjectTy:
     result = "object("
+    if n[1].kind == nnkOfInherit:
+      result.add "of " & sigOf(n[1][0], seen, refs) & ";"
     for d in n[2]:
       if d.kind == nnkIdentDefs:
         for i in 0 ..< d.len - 2:
-          result.add $d[i] & ":" & sigOf(d[^2], seen) & ";"
+          result.add $d[i] & ":" & sigOf(d[^2], seen, refs) & ";"
       else:
         result.add d.repr & ";"
     result.add ")"
@@ -47,14 +56,14 @@ proc sigOf(n: NimNode; seen: var seq[string]): string =
     result = "tuple("
     for d in n:
       for i in 0 ..< d.len - 2:
-        result.add $d[i] & ":" & sigOf(d[^2], seen) & ";"
+        result.add $d[i] & ":" & sigOf(d[^2], seen, refs) & ";"
     result.add ")"
   of nnkTupleConstr:
     result = "tuple("
-    for c in n: result.add sigOf(c, seen) & ";"
+    for c in n: result.add sigOf(c, seen, refs) & ";"
     result.add ")"
   of nnkDistinctTy:
-    result = "distinct " & sigOf(n[0], seen)
+    result = "distinct " & sigOf(n[0], seen, refs)
   of nnkEnumTy:
     result = "enum("
     for c in n:
@@ -63,16 +72,25 @@ proc sigOf(n: NimNode; seen: var seq[string]): string =
   of nnkBracketExpr:
     result = (if n[0].kind == nnkSym: n[0].strVal else: n[0].repr) & "["
     for i in 1 ..< n.len:
-      result.add (if n[i].kind == nnkSym and n[i].symKind == nskType: sigOf(n[i], seen)
+      result.add (if n[i].kind == nnkSym and n[i].symKind == nskType: sigOf(n[i], seen, refs)
                   else: n[i].repr) & ","
     result.add "]"
   else:
     result = n.repr
 
 macro typeSig*(T: typedesc): string =
-  ## T's shape, as text: what changes when a change to T matters to migrate
+  ## T's shape, as text: what changes when a change to T matters to migrate. It follows
+  ## refs, so a change to what one points at, wherever that's declared, is seen
   var seen: seq[string]
-  newLit(sigOf(T.getTypeInst[1], seen))
+  var refs = false
+  newLit(sigOf(T.getTypeInst[1], seen, refs))
+
+macro holdsRefs*(T: typedesc): bool =
+  ## whether a T has refs in it, anywhere
+  var seen: seq[string]
+  var refs = false
+  discard sigOf(T.getTypeInst[1], seen, refs)
+  newLit(refs)
 
 when defined(hcrHost) or defined(hcrScript):
   type
@@ -82,7 +100,7 @@ when defined(hcrHost) or defined(hcrScript):
 
 when defined(hcrScript):
   # the host's, which it exports (-rdynamic)
-  proc hcrHotSlot(key: cstring; stamp: int; make: HotMake; save: HotSave;
+  proc hcrHotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
                   load: HotLoad): pointer {.importc, cdecl.}
 
 elif defined(hcrHost):
@@ -95,20 +113,20 @@ elif defined(hcrHost):
 
   var hotSlots: Table[string, HotSlot]
 
-  proc hcrHotSlot(key: cstring; stamp: int; make: HotMake; save: HotSave;
+  proc hcrHotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
                   load: HotLoad): pointer {.exportc, cdecl, dynlib.} =
     ## the storage for a hot global: made the first time, and made again, with what still
-    ## fits carried over, when a library has it with another type. The old storage isn't
-    ## freed: old code may still write to it
+    ## fits carried over, when a library has it with another type or it holds refs. The
+    ## old storage isn't freed: old code may still write to it
     let k = $key
     if k notin hotSlots:
       hotSlots[k] = HotSlot(stamp: stamp, data: make(), save: save)
-    elif hotSlots[k].stamp != stamp:
+    elif hotSlots[k].stamp != stamp or refs:
       let old = hotSlots[k]
       let data = make()
       load(data, old.save(old.data))
       hotSlots[k] = HotSlot(stamp: stamp, data: data, save: save)
-      echo "hcr: " & k & "'s type changed; carried over what still fits"
+      if old.stamp != stamp: echo "hcr: " & k & "'s type changed; carried over what still fits"
     else:
       hotSlots[k].save = save
     hotSlots[k].data
@@ -130,12 +148,14 @@ macro hot*(def: untyped): untyped =
       let slot = genSym(nskLet, $base & "Slot")
       let hashSym = bindSym"hash"
       let typeSigSym = bindSym"typeSig"
+      let holdsRefsSym = bindSym"holdsRefs"
       let saveSym = bindSym"save"
       let loadSym = bindSym"load"
       let slotProc = bindSym"hcrHotSlot"
       # the value goes in and out as a field, so a type change at the top is seen too
       result.add quote do:
         let `slot` = cast[ptr `typ`](`slotProc`(`key`, static(`hashSym`(`typeSigSym`(`typ`))),
+          `holdsRefsSym`(`typ`),
           proc (): pointer {.cdecl.} =
             let p = create(`typ`)
             p[] = `first`

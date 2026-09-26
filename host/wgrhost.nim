@@ -12,7 +12,8 @@
 ##
 ## and the Context type, in a module that ends with `hotContext(Context)` (see simple's
 ## context.nim), and ends with `runApp(title, width, height, flags)`: that is the program.
-## Context can change while a hot build runs: its fields are carried over by name.
+## Context can change while a hot build runs: its fields are carried over by name. It can
+## hold refs (not pointers or closures): those are copied to the new code on each reload.
 ##
 ## The app asks for assets with `ctx.requestAsset(name) do (ctx: var Context; path: string)`.
 ## A callback can be the app's own closure even in a hot build: a library that's been
@@ -26,11 +27,15 @@ export hcr
 when defined(hcrScript):
   # the host's current context, which it exports (-rdynamic)
   proc wgrhostContext(): pointer {.importc, cdecl.}
+  proc wgrhostContextGen(): int {.importc, cdecl.}
 elif defined(hcrHost):
   var hostContext: pointer
     ## the app's context: made by the app's code (hcrNewContext), and made again when a
-    ## reload changes its type
+    ## reload carries it over (its type changed, or it holds refs)
+  var hostContextGen: int
+    ## counts the contexts made: a freed one's address may come back
   proc wgrhostContext(): pointer {.exportc, cdecl, dynlib.} = hostContext
+  proc wgrhostContextGen(): int {.exportc, cdecl, dynlib.} = hostContextGen
 
 proc requestAsset*[C](ctx: var C; name: string;
                       onReady: proc (ctx: var C; path: string) {.closure.}) =
@@ -38,13 +43,13 @@ proc requestAsset*[C](ctx: var C; name: string;
   ## and the context
   let onFailed = proc (path: string) = logError("failed to import asset: " & name)
   when defined(hcrHost) or defined(hcrScript):
-    # The context moves when a reload changes its type. A callback from before that runs
-    # old code, which doesn't know the new type: it's skipped.
-    let asked = wgrhostContext()
+    # The context is replaced when a reload carries it over. A callback from before that
+    # runs old code, which may not know the new type, and whose runtime its refs don't
+    # belong to: it's skipped.
+    let asked = wgrhostContextGen()
     let ready = proc (path: string) =
-      let now = wgrhostContext()
-      if now == asked: onReady(cast[ptr C](now)[], path)
-      else: echo "hcr: " & name & " arrived after the context's type changed: ask for it again"
+      if wgrhostContextGen() == asked: onReady(cast[ptr C](wgrhostContext())[], path)
+      else: echo "hcr: " & name & " arrived after a reload replaced the context: ask for it again"
   else:
     let c = addr ctx # the host's, which lives as long as the program
     let ready = proc (path: string) = onReady(c[], path)
@@ -77,6 +82,7 @@ else:
       var loadProc = onLoad
       var unloadProc = onUnload
       var saveProc = hcrSaveContext
+      var freeProc = hcrFreeContext
       var carried: string # the old context, written out, while the new code starts
       var script: HotScript
     else:
@@ -84,21 +90,25 @@ else:
       const loadProc = onLoad
 
     when defined(hcrHost):
-      proc beforeSwap(contextChanged: bool) =
+      proc beforeSwap(carry: bool) =
         unloadProc(ctx())
-        if contextChanged: carried = saveProc(hostContext)
+        if carry: carried = saveProc(hostContext)
 
-      proc afterSwap(contextChanged: bool) =
+      proc afterSwap(carry: bool) =
         frameProc = script.lookup(onFrame)
         loadProc = script.lookup(onLoad)
         unloadProc = script.lookup(onUnload)
         saveProc = script.lookup(hcrSaveContext)
-        if contextChanged:
-          # The old context isn't freed: old code that's still around (a callback) may
-          # hold on to what's in it.
+        if carry:
+          let old = hostContext
           hostContext = script.lookup(hcrNewContext)()
+          inc hostContextGen
           script.lookup(hcrLoadContext)(hostContext, carried)
           carried = ""
+          # by the old code, whose runtime made what's in it. A callback from before
+          # this doesn't see it again (requestAsset checks hostContextGen).
+          freeProc(old)
+        freeProc = script.lookup(hcrFreeContext)
         loadProc(ctx(), true)
 
     proc hostInit() =
