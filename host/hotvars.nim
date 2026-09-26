@@ -74,10 +74,11 @@ macro typeSig*(T: typedesc): string =
   var seen: seq[string]
   newLit(sigOf(T.getTypeInst[1], seen))
 
-type
-  HotMake = proc (): pointer {.cdecl.}
-  HotSave = proc (p: pointer): string {.cdecl.}
-  HotLoad = proc (p: pointer; data: string) {.cdecl.}
+when defined(hcrHost) or defined(hcrScript):
+  type
+    HotMake = proc (): pointer {.cdecl.}
+    HotSave = proc (p: pointer): string {.cdecl.}
+    HotLoad = proc (p: pointer; data: string) {.cdecl.}
 
 when defined(hcrScript):
   # the host's, which it exports (-rdynamic)

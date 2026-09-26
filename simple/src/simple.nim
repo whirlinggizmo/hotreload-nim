@@ -144,8 +144,7 @@ proc onUnload*(ctx: var Context) {.reloadable.} =
 
 proc onFrame*(ctx: var Context; dt, tickFraction: float) {.reloadable.} =
   let mouse = getMouseState()
-  
-  echo mouse
+  #echo mouse
 
   # Escape quits on desktop; a web page has nothing to quit to.
   when not defined(emscripten):
