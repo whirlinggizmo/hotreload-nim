@@ -75,7 +75,8 @@ when not declared(nimscript):
     switch("define", "hotReloadCode=" & target.codeModule)
 
     # no hints for builds and tasks, but a check keeps them: `nim check` (an editor's)
-    # runs as "check", the patched nimsuggest as "idetools", the stock one with none
+    # runs as "check", nimsuggest as "idetools" (one that checks a .nims as NimScript)
+    # or with none
     if getCommand() notin ["check", "idetools", ""]:
       switch("hints", "off")
 
