@@ -7,19 +7,23 @@
 ## file changes it builds the script as a shared library (-d:hcrScript) in the background
 ## and switches to it.
 ##
-## What the script keeps between calls lives in the host (a context object it is passed),
-## so a reload keeps it. A replaced library stays loaded, so a callback the script gave
+## What the script keeps between calls lives in a context object it is passed, which a
+## reload keeps. Its type can change while running: the module that declares it ends with
+## `hotContext(Context)`, and when a reloaded script's Context differs, the host has the
+## old script write its context out and the new one read back what still fits (migrate.nim). A replaced library stays loaded, so a callback the script gave
 ## wgrender keeps working, but it runs the code it came from: fine for a one-off (an asset
 ## task), not for one that keeps firing (setFrame, events). The host registers those and
 ## calls the script's current code.
 ##
 ## Around a swap, the host is told twice: `onUnload` just before, while the old code is
-## still what it calls, and `onLoad` just after, to look the new library's procs up. The
-## host can pass each on to the script (wgrhost calls the app's own onUnload and onLoad).
-## Neither runs for a library that fails to build or load, or that is refused: the old
-## code runs on.
+## still what it calls, and `onLoad` just after, to look the new library's procs up. Both
+## are told whether the context's type changed. The host can pass each on to the script
+## (wgrhost calls the app's own onUnload and onLoad). Neither runs for a library that
+## fails to build or load: the old code runs on.
 
-import std/macros
+import std/[hashes, macros]
+import ./migrate
+export migrate
 
 macro reloadable*(def: untyped): untyped =
   ## a proc the host calls: exported from the script's library in a script build, an
@@ -29,6 +33,26 @@ macro reloadable*(def: untyped): untyped =
   when defined(hcrScript):
     result.addPragma ident"exportc"
     result.addPragma ident"dynlib"
+
+template hotContext*(T: typedesc) =
+  ## call once, after the context type, in the module that declares it: its stamp (the
+  ## module's source, hashed: a change there may change T) and, for the host, the procs
+  ## that make a context and carry one across a change to T
+  const ContextStamp* {.inject.} = hash(staticRead(instantiationInfo(fullPaths = true).filename))
+
+  proc hcrContextStamp*(): int {.reloadable.} = ContextStamp
+
+  proc hcrNewContext*(): pointer {.reloadable.} =
+    ## a context with T's defaults, which lives until the program ends
+    let c = create(T)
+    c[] = T()
+    c
+
+  proc hcrSaveContext*(c: pointer): string {.reloadable.} =
+    save(result, cast[ptr T](c)[])
+
+  proc hcrLoadContext*(c: pointer; data: string) {.reloadable.} =
+    load(data, cast[ptr T](c)[])
 
 when defined(hcrHost):
   import std/[dynlib, os, osproc, times]
@@ -45,9 +69,9 @@ when defined(hcrHost):
     HotScript* = ref object
       source: string            ## the script's module
       buildDir: string
-      contextStamp: int         ## the host's Context; a library built from another is refused
-      onLoad: proc ()           ## the host looks its procs up again
-      onUnload: proc ()         ## the old code's last word, before the swap
+      contextStamp: int         ## the running script's Context: another is carried over
+      onLoad: proc (contextChanged: bool)   ## the host looks its procs up again
+      onUnload: proc (contextChanged: bool) ## the old code's last word, before the swap
       lib: LibHandle
       version: int
       build: Process
@@ -65,12 +89,14 @@ when defined(hcrHost):
     ## where the script's builds go (the libraries and their Nim cache), when the host's
     ## config names one: -d:hcrBuildDir=<dir>
 
-  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (); onUnload: proc () = nil;
+  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (contextChanged: bool);
+                     onUnload: proc (contextChanged: bool) = nil;
                      buildDir = (if hcrBuildDir.len > 0: hcrBuildDir
                                  else: source.parentDir.parentDir / "build/script")): HotScript =
     ## watches the .nim files in `source`'s directory. `onLoad` runs after each swap:
     ## look the script's procs up there, with `lookup`. `onUnload` runs before it, once
-    ## the new library is loaded and accepted
+    ## the new library is loaded. `contextChanged`: the new script's Context isn't the old
+    ## one's, so the context must be carried over (hcrSaveContext, then hcrLoadContext)
     result = HotScript(source: source, buildDir: buildDir, contextStamp: contextStamp,
                        onLoad: onLoad, onUnload: onUnload)
     result.mtimes = result.sources()
@@ -102,16 +128,20 @@ when defined(hcrHost):
       return
     # --noMain: the library's Nim runtime and globals are set up by its NimMain
     cast[proc () {.cdecl, raises: [].}](lib.symAddr("NimMain"))()
-    let stamp = lib.symAddr("hcrContextStamp")
-    if stamp == nil or cast[proc (): int {.cdecl.}](stamp)() != h.contextStamp:
-      echo "hcr: the script's Context is not the host's (context.nim changed): restart to use it"
+    let stampProc = lib.symAddr("hcrContextStamp")
+    if stampProc == nil:
+      echo "hcr: " & h.building & " has no hcrContextStamp (hotContext): not loading it"
       unloadLib(lib)
       return
-    if h.onUnload != nil: h.onUnload()
+    let stamp = cast[proc (): int {.cdecl.}](stampProc)()
+    let changed = stamp != h.contextStamp
+    if h.onUnload != nil: h.onUnload(changed)
     # The old library stays loaded: strings in the context may still point at its string
     # literals, and what it handed out at its code. A few hundred KB per reload.
     h.lib = lib
-    h.onLoad()
+    h.contextStamp = stamp
+    h.onLoad(changed)
+    if changed: echo "hcr: the context's type changed; carried its fields over"
     echo "hcr: reloaded " & h.source.extractFilename & " (" & h.building.extractFilename & ")"
 
   proc update*(h: HotScript; now: float) =

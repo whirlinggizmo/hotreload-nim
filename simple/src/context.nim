@@ -1,11 +1,11 @@
-## What the app keeps between frames: owned by the host, so a reload keeps it; the
-## script is passed it. Plain values only (handles, numbers, strings): no refs or
-## closures, which would belong to one library's runtime.
+## What the app keeps between frames: owned by the host, so a reload keeps it; the app's
+## code is passed it. Plain values only (handles, numbers, strings, and objects, tuples,
+## seqs and arrays of them): no refs, pointers or closures, which belong to one library.
 ##
-## Changing this file needs a restart: the host refuses a script built from another
-## version of it (ContextStamp).
+## It can change while `nim hot` runs: after a reload that changes it, each field that's
+## still here with the same type keeps its value, and a new one starts at its default
+## (`field: T = value`).
 
-import std/hashes
 import wgr
 import hcr
 
@@ -25,7 +25,4 @@ type
     message*: string
     platformText*: string
 
-const ContextStamp* = hash(staticRead(currentSourcePath()))
-  ## this file, hashed: what the host checks a reloaded script against
-
-proc hcrContextStamp*(): int {.reloadable.} = ContextStamp
+hotContext(Context)
