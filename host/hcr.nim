@@ -12,9 +12,10 @@
 ## `hotContext(Context)`, and when a reloaded script's Context differs, the host has the
 ## old script write its context out and the new one read back what still fits
 ## (migrate.nim), and the old script free the old one. A context that holds refs is
-## carried over like that on every reload: each library has its own Nim runtime, and a
-## ref belongs to the one that made it. A module's own globals can survive a reload too:
-## `var x {.hot.}: T` (hotvars.nim).
+## carried over on every reload: each library has its own Nim runtime, and a ref belongs
+## to the one that made it. When its type hasn't changed that's a copy, quicker: the new
+## script reads the old context in place and makes its own refs. A module's own globals
+## can survive a reload too: `var x {.hot.}: T` (hotvars.nim).
 ##
 ## A replaced library stays loaded, so a callback the script gave wgrender keeps working,
 ## but it runs the code it came from: fine for a one-off (an asset task), not for one that
@@ -23,13 +24,20 @@
 ##
 ## Around a swap, the host is told twice: `onUnload` just before, while the old code is
 ## still what it calls, and `onLoad` just after, to look the new library's procs up. Both
-## are told whether the context is carried over to a new one. The host can pass each on to the script
-## (wgrhost calls the app's own onUnload and onLoad). Neither runs for a library that
+## are told how the context is carried over (Carry). The host can pass each on to the
+## script (wgrhost calls the app's own onUnload and onLoad). Neither runs for a library that
 ## fails to build or load: the old code runs on.
 
 import std/[hashes, macros]
 import ./hotvars
 export hotvars
+
+type Carry* = enum
+  ## what a reload does with the context
+  carryNone     ## keeps it: the same type, and no refs
+  carryCopy     ## the same type, with refs: the new code copies it (hcrCopyContext)
+  carryMigrate  ## another type: the old code writes it out (hcrSaveContext), and the
+                ## new code reads back what fits (hcrLoadContext)
 
 macro reloadable*(def: untyped): untyped =
   ## a proc the host calls: exported from the script's library in a script build, an
@@ -54,6 +62,12 @@ template hotContext*(T: typedesc) =
     ## a context with T's defaults, which lives until the program ends
     let c = create(T)
     c[] = T()
+    c
+
+  proc hcrCopyContext*(old: pointer): pointer {.reloadable.} =
+    ## the old code's context, of the same type, copied with refs of this code's own
+    let c = create(T)
+    copy(c[], cast[ptr T](old))
     c
 
   proc hcrSaveContext*(c: pointer): string {.reloadable.} =
@@ -83,8 +97,8 @@ when defined(hcrHost):
       source: string            ## the script's module
       buildDir: string
       contextStamp: int         ## the running script's Context: another is carried over
-      onLoad: proc (carry: bool)   ## the host looks its procs up again
-      onUnload: proc (carry: bool) ## the old code's last word, before the swap
+      onLoad: proc (carry: Carry)   ## the host looks its procs up again
+      onUnload: proc (carry: Carry) ## the old code's last word, before the swap
       lib: LibHandle
       version: int
       build: Process
@@ -102,15 +116,14 @@ when defined(hcrHost):
     ## where the script's builds go (the libraries and their Nim cache), when the host's
     ## config names one: -d:hcrBuildDir=<dir>
 
-  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (carry: bool);
-                     onUnload: proc (carry: bool) = nil;
+  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (carry: Carry);
+                     onUnload: proc (carry: Carry) = nil;
                      buildDir = (if hcrBuildDir.len > 0: hcrBuildDir
                                  else: source.parentDir.parentDir / "build/script")): HotScript =
     ## watches the .nim files in `source`'s directory. `onLoad` runs after each swap:
     ## look the script's procs up there, with `lookup`. `onUnload` runs before it, once
-    ## the new library is loaded. `carry`: the context must be carried over to a new one
-    ## (the old code's hcrSaveContext, the new code's hcrNewContext and hcrLoadContext,
-    ## then the old code's hcrFreeContext): its type changed, or it holds refs
+    ## the new library is loaded. `carry`: what to do with the context (Carry); when it's
+    ## replaced, the old code frees the old one (hcrFreeContext)
     result = HotScript(source: source, buildDir: buildDir, contextStamp: contextStamp,
                        onLoad: onLoad, onUnload: onUnload)
     result.mtimes = result.sources()
@@ -149,7 +162,10 @@ when defined(hcrHost):
       return
     let stamp = cast[proc (): int {.cdecl.}](stampProc)()
     let changed = stamp != h.contextStamp
-    let carry = changed or cast[proc (): bool {.cdecl.}](lib.symAddr("hcrContextHoldsRefs"))()
+    let carry =
+      if changed: carryMigrate
+      elif cast[proc (): bool {.cdecl.}](lib.symAddr("hcrContextHoldsRefs"))(): carryCopy
+      else: carryNone
     if h.onUnload != nil: h.onUnload(carry)
     # The old library stays loaded: strings in the context may still point at its string
     # literals, and what it handed out at its code. A few hundred KB per reload.

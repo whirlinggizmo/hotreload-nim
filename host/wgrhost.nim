@@ -13,7 +13,8 @@
 ## and the Context type, in a module that ends with `hotContext(Context)` (see simple's
 ## context.nim), and ends with `runApp(title, width, height, flags)`: that is the program.
 ## Context can change while a hot build runs: its fields are carried over by name. It can
-## hold refs (not pointers or closures): those are copied to the new code on each reload.
+## hold refs (not pointers or closures): those are copied to the new code on each reload
+## (a quick copy in place when its type hasn't changed).
 ##
 ## The app asks for assets with `ctx.requestAsset(name) do (ctx: var Context; path: string)`.
 ## A callback can be the app's own closure even in a hot build: a library that's been
@@ -90,21 +91,24 @@ else:
       const loadProc = onLoad
 
     when defined(hcrHost):
-      proc beforeSwap(carry: bool) =
+      proc beforeSwap(carry: Carry) =
         unloadProc(ctx())
-        if carry: carried = saveProc(hostContext)
+        if carry == carryMigrate: carried = saveProc(hostContext)
 
-      proc afterSwap(carry: bool) =
+      proc afterSwap(carry: Carry) =
         frameProc = script.lookup(onFrame)
         loadProc = script.lookup(onLoad)
         unloadProc = script.lookup(onUnload)
         saveProc = script.lookup(hcrSaveContext)
-        if carry:
+        if carry != carryNone:
           let old = hostContext
-          hostContext = script.lookup(hcrNewContext)()
+          if carry == carryCopy:
+            hostContext = script.lookup(hcrCopyContext)(old)
+          else:
+            hostContext = script.lookup(hcrNewContext)()
+            script.lookup(hcrLoadContext)(hostContext, carried)
+            carried = ""
           inc hostContextGen
-          script.lookup(hcrLoadContext)(hostContext, carried)
-          carried = ""
           # by the old code, whose runtime made what's in it. A callback from before
           # this doesn't see it again (requestAsset checks hostContextGen).
           freeProc(old)

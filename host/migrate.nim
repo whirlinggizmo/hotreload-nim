@@ -17,8 +17,12 @@
 ## is gone. A ref to an object that inherits can't be: its type is only known when it runs.
 ## Pointers and closures belong to the build that made them, so they're refused at
 ## compile time.
+##
+## When the type hasn't changed but holds refs, there's a quicker way: `copy`, in the new
+## build, reads the old value in place (the layout is the same) and makes its own refs.
 
 import std/[tables, typetraits]
+import ./typesig
 
 type
   Writer = object
@@ -188,4 +192,49 @@ proc load*[T](s: string; x: var T) =
   while i < r.pending.len:
     let fill = r.pending[i]
     fill(r)
+    inc i
+
+type Copier = object
+  made: Table[pointer, pointer] ## an old ref's object: its copy
+  pending: seq[proc (c: var Copier) {.closure.}] ## copies still to fill in
+
+proc copyInto[T](c: var Copier; dst: var T; src: ptr T) =
+  # `src` is the other build's: read through pointers, never assigned from, so none of
+  # its refs is counted (or seen by this build's cycle collector)
+  when not holdsRefs(T):
+    dst = src[]
+  elif T is distinct:
+    copyInto(c, distinctBase(T)(dst), cast[ptr distinctBase(T)](src))
+  elif T is ref:
+    let p = cast[pointer](src[])
+    if p == nil:
+      dst = nil
+    elif p in c.made:
+      dst = cast[T](c.made[p])
+    else:
+      new(dst)
+      c.made[p] = cast[pointer](dst)
+      let target = dst
+      c.pending.add proc (c: var Copier) =
+        copyInto(c, target[], cast[ptr pointerBase(T)](p))
+  elif T is object or T is tuple:
+    for d, s in fields(dst, src[]):
+      copyInto(c, d, addr s)
+  elif T is seq:
+    dst.setLen(src[].len)
+    for i in 0 ..< dst.len: copyInto(c, dst[i], addr src[][i])
+  elif T is array:
+    for i in low(T) .. high(T): copyInto(c, dst[i], addr src[][i])
+  else:
+    {.error: "migrate: a " & $T & " can't be carried to another build " & Refused.}
+
+proc copy*[T](dst: var T; src: ptr T) =
+  ## `src`, the other build's T of the same layout, copied into `dst`, with refs of this
+  ## build's own; what was shared is shared, and a cycle stays a cycle
+  var c: Copier
+  copyInto(c, dst, src)
+  var i = 0
+  while i < c.pending.len:
+    let fill = c.pending[i]
+    fill(c)
     inc i
