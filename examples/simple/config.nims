@@ -1,4 +1,5 @@
-# wgrender's simple example, hot reloaded. nimhcr's tasks (src/nimhcr/tasks.nims):
+# wgrender's simple example, hot reloaded: src/main.nim is the program, src/simple.nim the
+# code it reloads. hotreload's tasks (src/hotreload/tasks.nims):
 #
 #   nim build hot|debug|release|web|all
 #   nim hot       build and run with hot reload: edit src/simple.nim while it runs
@@ -24,11 +25,11 @@
 when not declared(nimscript):
   # what NimScript doesn't have already (it has getEnv, fileExists, findExe, mkDir, ...)
   from std/os import `/`, parentDir, getHomeDir, quoteShell, relativePath
-  import "../../src/nimhcr/tasks.nims"
+  import "../../src/hotreload/tasks.nims"
 
   const thisDir = currentSourcePath().parentDir()
-  let app = HcrApp(dir: thisDir, name: "simple")
-  hcrConfig(app)
+  let target = BuildTarget(dir: thisDir, name: "simple")
+  hotReloadConfig(target)
 
   let wgrNim = getEnv("WGRENDER_NIM", getHomeDir() / "projects/github/whirlinggizmo/wgrender-nim")
   let wgrenderDir =
@@ -59,7 +60,7 @@ when not declared(nimscript):
     if getEnv("WEB_DEBUG", "0") != "1":
       switch("define", "release")
       switch("clang.options.linker", "")
-  elif defined(hcrScript):
+  elif defined(hotReloadLibrary):
     # wgrender comes from the host that loads the code
     switch("define", "wgrDeclarationsOnly")
   else:
@@ -73,13 +74,13 @@ when not declared(nimscript):
     let site = thisDir / "out" / webVariant()
     mkDir(site)
     exec "nim c -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
-         quoteShell(app.mainModule)
+         quoteShell(target.mainModule)
     # wgrender-nim's page opens "simple" first, which is this program's name too
     exec python() & " " & quoteShell(wgrNim / "tools/webdeploy.py") & " " & site.quoteShell &
          " " & quoteShell(wgrNim / "web/index.html")
     echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open http://localhost:8000/"
 
-  hcrTasks(app, [("web", buildWeb)])
+  hotReloadTasks(target, [("web", buildWeb)])
 
   task web, "Build for the web, simple.nim compiled in":
     buildWeb()

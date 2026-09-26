@@ -1,6 +1,6 @@
 # {.hot.} in a build that isn't hot: an ordinary global, with its fields' defaults
 import std/unittest
-import nimhcr/hotvars
+import hotreload/hotglobals
 
 type Settings = object
   speed: float = 2.0

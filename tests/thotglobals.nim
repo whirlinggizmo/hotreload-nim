@@ -1,5 +1,5 @@
 import std/unittest
-import nimhcr/hotvars
+import hotreload/hotglobals
 import hotkeys/a/state as sa, hotkeys/b/state as sb
 
 var count {.hot.} = 3
@@ -11,7 +11,7 @@ type
 
 template slot(key: string; T: typedesc): ptr T =
   ## what a library's `var x {.hot.}: T` asks the host for, as one loading after another
-  cast[ptr T](hcrHotSlot(key, hash(typeSig(T)), holdsRefs(T),
+  cast[ptr T](hotSlot(key, hash(typeSig(T)), holdsRefs(T),
     proc (): pointer {.cdecl.} = create(T),
     proc (p: pointer): string {.cdecl.} = save(result, (value: cast[ptr T](p)[])),
     proc (p: pointer; data: string) {.cdecl.} =
@@ -26,7 +26,7 @@ template slot(key: string; T: typedesc): ptr T =
 suite "hot globals":
   test "keyed by module path and name":
     let keys = hotKeys()
-    check "thotvars.count" in keys
+    check "thotglobals.count" in keys
     check "hotkeys/a/state.speed" in keys
     check "hotkeys/b/state.speed" in keys
     check sa.speed == 1 and sb.speed == 2.5 and count == 3

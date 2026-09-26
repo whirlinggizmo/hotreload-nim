@@ -2,7 +2,7 @@
 
 version       = "0.1.0"
 author        = "Rob Knopf"
-description   = "Hot code reload for Nim programs: reloadable procs and hot globals"
+description   = "Hot reload for Nim programs: rebuild the code while it runs, keep its state"
 license       = "MIT"
 srcDir        = "src"
 installExt    = @["nim", "nims"]

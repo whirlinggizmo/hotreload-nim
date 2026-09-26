@@ -1,12 +1,11 @@
-## wgrender's simple example, hot reloaded: setup, assets, each frame's update, picking
-## and drawing. Edit it while `nim hot` runs (BobSpeed, the colors, the text) and it's
-## rebuilt and swapped in (nimhcr: src/nimhcr/hcr.nim). Its state is hot globals, which a
-## reload keeps; the program itself, which wires the code to wgrender, is the hotMain
-## block at the end.
+## The code of wgrender's simple example, which `nim hot` reloads: setup, assets, each
+## frame's update, picking and drawing. Edit it while it runs (BobSpeed, the colors, the
+## text) and it's rebuilt and swapped in (hotreload: src/hotreload/reload.nim). Its state
+## is hot globals, which a reload keeps; main.nim, the program, calls its entries.
 
 import std/[math, strformat]
 import wgr
-import nimhcr
+import hotreload
 
 const
   DebugFontPath = "fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"
@@ -21,9 +20,6 @@ const
   SpriteYOffset = 3.0
   BobSpeed = 1.0
   BobHeight = 1.5
-
-  AssetBase {.strdefine: "wgrAssetBase".} = "assets"
-    ## beside the page on the web; on the desktop the config names it
 
 var
   elapsed {.hot.} = 0.0
@@ -46,10 +42,10 @@ proc requestAsset(name: string; onReady: proc (path: string)) =
   ## load an asset; `onReady` runs on a later frame with it at `path`, local and ready.
   ## One that arrives after a reload moved hot globals to new storage is skipped: it's
   ## the old code's, which would write to their old copies
-  let carries = hotCarries()
+  let moves = hotMoves()
   let onFailed = proc (path: string) = logError("failed to import asset: " & name)
   let ready = proc (path: string) =
-    if hotCarries() == carries: onReady(path)
+    if hotMoves() == moves: onReady(path)
     else: echo "simple: " & name & " arrived after a reload moved hot globals: ask again"
   if not ensureAssetAsync(name).addTask(ready, onFailed):
     onFailed(name)
@@ -102,7 +98,7 @@ proc drawOverlay(mouse: MouseState) =
 
   debugFont.drawFps(10, 10, DebugFontSize, greyAlpha)
 
-proc onInit() {.reloadable.} =
+proc onInit*() {.hotEntry.} =
   ## once, at startup
   setLogLevel(LogLevel.Warn)
   setTargetFps(60)
@@ -159,18 +155,18 @@ proc onInit() {.reloadable.} =
   requestAsset(KomikaFontPath) do (path: string):
     komikaFont = newFont(path)
 
-proc onLoad(reloaded: bool) {.reloadable.} =
+proc onLoad*(reloaded: bool) {.hotEntry.} =
   ## once at startup (reloaded = false), then after each reload, on the new code: set up
   ## or fix up what the new code expects
   if reloaded:
     inc reloads
     echo "simple: reloaded (", reloads, ")"
 
-proc onUnload() {.reloadable.} =
+proc onUnload*() {.hotEntry.} =
   ## on the old code, just before a reload replaces it
   echo "simple: unloading"
 
-proc onFrame(dt, tickFraction: float) {.reloadable.} =
+proc onFrame*(dt, tickFraction: float) {.hotEntry.} =
   let mouse = getMouseState()
   if isKeyPressed(Key.A):
     echo &"x:{mouse.x}, y:{mouse.y}"
@@ -189,26 +185,3 @@ proc onFrame(dt, tickFraction: float) {.reloadable.} =
   drawCenteredMessage()
   drawOverlay(mouse)
   endFrame()
-
-hotMain:
-  # the program: wgrender's init and frame callbacks, which call the code above (its
-  # latest version, in a hot build)
-  let hot = hotHost()
-  hot.beforeReload = proc () = onUnload()
-  hot.afterReload = proc () = onLoad(reloaded = true)
-
-  initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
-             {WindowFlag.Msaa4x, WindowFlag.Resizable})
-  setInit(proc () =
-    setAssetHost(AssetBase)
-    setAssetManifest(AssetManifestName)
-    onInit()
-    onLoad(reloaded = false))
-  setFrame(proc (dt, tickFraction: float) =
-    hot.update()
-    onFrame(dt, tickFraction))
-  let status = run()
-  # On the web wgr_run returns at once and the browser drives the frames, so don't
-  # exit() here: that would tear the program down.
-  when not defined(emscripten):
-    quit status

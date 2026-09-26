@@ -1,5 +1,5 @@
 import std/unittest
-import nimhcr/migrate
+import hotreload/migrate
 
 type
   Handle = distinct int32

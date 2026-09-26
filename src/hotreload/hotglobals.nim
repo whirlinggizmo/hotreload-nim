@@ -1,7 +1,8 @@
 ## Globals that survive a reload: `var enemies {.hot.}: seq[Enemy]`, or with a first value,
-## `var speed {.hot.} = 1.0`. In a hot build the host keeps each one, by its module (its
-## path from the main module's directory: `player/state.speed`) and name, and every library that loads is handed the one that's there: its first value is
-## used once, when it's first made. When a reload changes its type, what still fits is
+## `var speed {.hot.} = 1.0`. In a hot build the program keeps each one, by its module (its
+## path from the code's directory: `player/state.speed`) and name, and every library that
+## loads is handed the one that's there: its first value is used once, when it's first
+## made. When a reload changes its type, what still fits is
 ## carried over (migrate.nim) and the rest starts from the first value. Everywhere else
 ## (debug, release, web) it's an ordinary global.
 ##
@@ -18,42 +19,46 @@
 ## corrupting.
 
 import std/[hashes, macros]
-when defined(hcrHost) or defined(hcrScript):
+when defined(hotReload) or defined(hotReloadLibrary):
   import std/[compilesettings, os, strutils]
 import ./[migrate, typesig]
 export migrate, typesig, hashes
 
+const hotReloadCode* {.strdefine.} = ""
+  ## the code's module, which a hot build rebuilds as a library (hotReloadConfig sets it)
+
 proc moduleKey*(n: NimNode): string {.compileTime.} =
-  ## where `n` is: its module's path from the main module's directory, without the
-  ## extension (`player/state`). The host and every script are built from the same main
-  ## module, so each makes the same key; by path, so two modules with one name in
-  ## different directories don't share
-  when defined(hcrHost) or defined(hcrScript):
-    n.lineInfoObj.filename.changeFileExt("")
-      .relativePath(querySetting(projectPath)).replace('\\', '/')
+  ## where `n` is: its module's path from the code's directory, without the extension
+  ## (`player/state`). The program and each library are built with the same code module,
+  ## so each makes the same key (without one, a test's: its main module's directory); by
+  ## path, so two modules with one name in different directories don't share
+  when defined(hotReload) or defined(hotReloadLibrary):
+    let root = if hotReloadCode.len > 0: hotReloadCode.parentDir
+               else: querySetting(projectPath)
+    n.lineInfoObj.filename.changeFileExt("").relativePath(root).replace('\\', '/')
   else:
     ""
 
-when defined(hcrHost) or defined(hcrScript):
+when defined(hotReload) or defined(hotReloadLibrary):
   type
     HotMake = proc (): pointer {.cdecl.}
     HotSave = proc (p: pointer): string {.cdecl.}
     HotLoad = proc (p: pointer; data: string) {.cdecl.}
     HotCopy = proc (old: pointer): pointer {.cdecl.}
 
-when defined(hcrScript):
-  # the host's, which it exports (-rdynamic)
-  proc hcrHotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
-                  load: HotLoad; copy: HotCopy): pointer {.importc, cdecl.}
-  proc hcrHotCarries(): int {.importc, cdecl.}
+when defined(hotReloadLibrary):
+  # the program's, which it exports (-rdynamic)
+  proc hotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
+               load: HotLoad; copy: HotCopy): pointer {.importc: "hotreload_slot", cdecl.}
+  proc hotreloadMoves(): int {.importc: "hotreload_moves", cdecl.}
 
-  proc hotCarries*(): int = hcrHotCarries()
+  proc hotMoves*(): int = hotreloadMoves()
     ## how many times a hot global has moved to new storage (a reload carried it over):
     ## read it when you hand out a callback, and again when it runs. If it changed, the
     ## callback is from older code, and what it writes to hot globals may go to an old
     ## copy: skip it (ask again)
 
-elif defined(hcrHost):
+elif defined(hotReload):
   import std/tables
 
   type HotSlot = object
@@ -62,15 +67,16 @@ elif defined(hcrHost):
     save: HotSave    ## the latest library's, which knows `data`'s type
 
   var hotSlots: Table[string, HotSlot]
-  var carries: int
+  var moves: int
 
-  proc hcrHotCarries(): int {.exportc, cdecl, dynlib.} = carries
+  proc hotreloadMoves(): int {.exportc: "hotreload_moves", cdecl, dynlib.} = moves
 
-  proc hotCarries*(): int = carries
-    ## how many times a hot global has moved to new storage (see the script build's)
+  proc hotMoves*(): int = moves
+    ## how many times a hot global has moved to new storage (see the library build's)
 
-  proc hcrHotSlot*(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
-                   load: HotLoad; copy: HotCopy): pointer {.exportc, cdecl, dynlib.} =
+  proc hotSlot*(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
+                load: HotLoad; copy: HotCopy): pointer {.exportc: "hotreload_slot", cdecl,
+                                                         dynlib.} =
     ## the storage for a hot global: made the first time, and made again, with what still
     ## fits carried over, when a library has it with another type or it holds refs. The
     ## old storage isn't freed: old code may still write to it
@@ -82,26 +88,26 @@ elif defined(hcrHost):
       let data = make()
       load(data, old.save(old.data))
       hotSlots[k] = HotSlot(stamp: stamp, data: data, save: save)
-      inc carries
-      echo "hcr: " & k & "'s type changed; carried over what still fits"
+      inc moves
+      echo "hotreload: " & k & "'s type changed; carried over what still fits"
     elif refs:
       hotSlots[k] = HotSlot(stamp: stamp, data: copy(hotSlots[k].data), save: save)
-      inc carries
+      inc moves
     else:
       hotSlots[k].save = save
     hotSlots[k].data
 
   proc hotKeys*(): seq[string] =
-    ## the hot globals the host keeps, by key
+    ## the hot globals the program keeps, by key
     for k in hotSlots.keys: result.add k
 
 else:
-  proc hotCarries*(): int = 0
-    ## nothing is carried outside a hot build
+  proc hotMoves*(): int = 0
+    ## nothing moves outside a hot build
 
 macro hot*(def: untyped): untyped =
   ## `var name {.hot.}: T = first`: a global that survives a reload (see the module's doc)
-  when not (defined(hcrHost) or defined(hcrScript)):
+  when not (defined(hotReload) or defined(hotReloadLibrary)):
     # an ordinary global, but with its fields' defaults, as in a hot build (a bare
     # `var x: T` leaves them out)
     result = def
@@ -117,8 +123,7 @@ macro hot*(def: untyped): untyped =
       let base = if name.kind == nnkPostfix: name[1] else: name
       let typ = if d[1].kind != nnkEmpty: d[1] else: newCall(ident"typeof", d[2])
       let first = if d[2].kind != nnkEmpty: d[2] else: newCall(ident"default", typ)
-      # the host and the script are built from the same main module, so both make the same
-      # key; by path, so two modules with one name in different directories don't share
+      # the same key in the program and in each library (moduleKey)
       let key = newLit(moduleKey(def) & "." & $base)
       # named, not gensym'd: what a debugger shows for the global (`speedHotSlot[]`)
       let slot = ident($base & "HotSlot")
@@ -128,7 +133,7 @@ macro hot*(def: untyped): untyped =
       let saveSym = bindSym"save"
       let loadSym = bindSym"load"
       let copySym = bindSym"copy"
-      let slotProc = bindSym"hcrHotSlot"
+      let slotProc = bindSym"hotSlot"
       # the value goes in and out as a field, so a type change at the top is seen too
       result.add quote do:
         let `slot` = cast[ptr `typ`](`slotProc`(`key`, static(`hashSym`(`typeSigSym`(`typ`))),

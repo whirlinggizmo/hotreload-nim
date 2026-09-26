@@ -1,2 +1,2 @@
-import nimhcr/hotvars
+import hotreload/hotglobals
 var speed* {.hot.} = 1

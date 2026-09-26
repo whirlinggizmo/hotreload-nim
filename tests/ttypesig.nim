@@ -1,6 +1,6 @@
 import std/unittest
 import std/strutils
-import nimhcr/typesig
+import hotreload/typesig
 
 type
   Leaf = object
