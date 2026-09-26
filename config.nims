@@ -11,7 +11,7 @@
 # sees it, nor does the patched server (see .vscode/settings.json), which checks this file
 # for real.
 when not declared(nimscript):
-  from std/os import `/`, parentDir # what NimScript doesn't have already
+  from std/os import `/`, parentDir, splitFile, quoteShell # what NimScript doesn't have already
 
   const thisDir = currentSourcePath().parentDir()
 
@@ -38,3 +38,10 @@ when not declared(nimscript):
   task web, "Build simple for the web": inSimple "web"
   task serve, "Serve simple's web build on http://localhost:8000": inSimple "serve"
   task clean, "Remove simple's build outputs": inSimple "clean"
+
+  task test, "Run the host's tests (tests/t*.nim)":
+    # tests/config.nims has their settings; a test's own <test>.nims, any it needs more
+    for f in listFiles(thisDir / "tests"):
+      let (_, name, ext) = splitFile(f)
+      if ext == ".nim" and name.len > 0 and name[0] == 't':
+        exec "nim c -r --outdir:" & quoteShell(thisDir / "build/tests") & " " & quoteShell(f)

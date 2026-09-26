@@ -108,9 +108,11 @@ when defined(hcrHost):
       nextCheck: float
 
   proc sources(h: HotScript): seq[(string, Time)] =
-    ## the .nim files beside the script's, and when each last changed
-    for path in walkFiles(h.source.parentDir / "*.nim"):
-      result.add (path, getLastModificationTime(path))
+    ## the .nim files in the script's directory and those below it, and when each last
+    ## changed
+    for path in walkDirRec(h.source.parentDir):
+      if path.splitFile.ext == ".nim":
+        result.add (path, getLastModificationTime(path))
 
   const hcrBuildDir {.strdefine.} = ""
     ## where the script's builds go (the libraries and their Nim cache), when the host's

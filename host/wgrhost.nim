@@ -74,7 +74,7 @@ else:
       hostContext = hcrNewContext()
       proc ctx(): var Context = cast[ptr Context](hostContext)[]
     else:
-      var context: Context
+      var context = Context() # with its fields' defaults, which `var x: T` leaves out
       proc ctx(): var Context = context
 
     # The app's procs: the compiled-in ones, until a reload replaces them

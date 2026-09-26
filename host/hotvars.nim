@@ -1,6 +1,6 @@
 ## Globals that survive a reload: `var enemies {.hot.}: seq[Enemy]`, or with a first value,
-## `var speed {.hot.} = 1.0`. In a hot build the host keeps each one, by its module and
-## name, and every library that loads is handed the one that's there: its first value is
+## `var speed {.hot.} = 1.0`. In a hot build the host keeps each one, by its module (its
+## path from the main module's directory: `player/state.speed`) and name, and every library that loads is handed the one that's there: its first value is
 ## used once, when it's first made. When a reload changes its type, what still fits is
 ## carried over (migrate.nim) and the rest starts from the first value. Everywhere else
 ## (debug, release, web) it's an ordinary global.
@@ -19,7 +19,7 @@
 
 import std/[hashes, macros]
 when defined(hcrHost) or defined(hcrScript):
-  import std/os
+  import std/[compilesettings, os, strutils]
 import ./[migrate, typesig]
 export migrate, typesig, hashes
 
@@ -45,8 +45,8 @@ elif defined(hcrHost):
 
   var hotSlots: Table[string, HotSlot]
 
-  proc hcrHotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
-                  load: HotLoad; copy: HotCopy): pointer {.exportc, cdecl, dynlib.} =
+  proc hcrHotSlot*(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
+                   load: HotLoad; copy: HotCopy): pointer {.exportc, cdecl, dynlib.} =
     ## the storage for a hot global: made the first time, and made again, with what still
     ## fits carried over, when a library has it with another type or it holds refs. The
     ## old storage isn't freed: old code may still write to it
@@ -65,10 +65,19 @@ elif defined(hcrHost):
       hotSlots[k].save = save
     hotSlots[k].data
 
+  proc hotKeys*(): seq[string] =
+    ## the hot globals the host keeps, by key
+    for k in hotSlots.keys: result.add k
+
 macro hot*(def: untyped): untyped =
   ## `var name {.hot.}: T = first`: a global that survives a reload (see the module's doc)
   when not (defined(hcrHost) or defined(hcrScript)):
-    return def
+    # an ordinary global, but with its fields' defaults, as in a hot build (a bare
+    # `var x: T` leaves them out)
+    result = def
+    for d in result:
+      if d.kind == nnkIdentDefs and d[^1].kind == nnkEmpty and d[^2].kind != nnkEmpty:
+        d[^1] = newCall(ident"default", d[^2])
   else:
     result = newStmtList()
     for d in def:
@@ -78,7 +87,11 @@ macro hot*(def: untyped): untyped =
       let base = if name.kind == nnkPostfix: name[1] else: name
       let typ = if d[1].kind != nnkEmpty: d[1] else: newCall(ident"typeof", d[2])
       let first = if d[2].kind != nnkEmpty: d[2] else: newCall(ident"default", typ)
-      let key = newLit(def.lineInfoObj.filename.splitFile.name & "." & $base)
+      # the host and the script are built from the same main module, so both make the same
+      # key; by path, so two modules with one name in different directories don't share
+      let module = def.lineInfoObj.filename.changeFileExt("")
+                      .relativePath(querySetting(projectPath)).replace('\\', '/')
+      let key = newLit(module & "." & $base)
       let slot = genSym(nskLet, $base & "Slot")
       let hashSym = bindSym"hash"
       let typeSigSym = bindSym"typeSig"
