@@ -19,7 +19,7 @@
         "panel": "shared",
         "showReuseMessage": false,
         "clear": true,
-        "close": true
+        "close": false
     },
     "promptOnClose": false,
     "tasks": [

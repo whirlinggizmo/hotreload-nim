@@ -22,10 +22,11 @@
 #   BACKEND=webgl2|webgpu   WEB_THREADS=1|0   WEB_DEBUG=0|1
 # Scripts are built by the host with -d:hcrScript, which this file also answers.
 
-# The stock nimlangserver checks a .nims with --import:system/nimscript, which makes every
-# NimScript proc ambiguous (and crashes nimsuggest): when that module is visible, there is
-# nothing here to check. A real run (nim build, a nim c config) never sees it, nor does the
-# patched server (see .vscode/settings.json), which checks this file for real.
+# The stock nimlangserver checks a .nims with --import:system/nimscript, which `nim check`
+# (nim.useNimCheck) turns into every NimScript proc twice, all ambiguous: when that module
+# is visible, there is nothing here to check. A real run (nim build, a nim c config) never
+# sees it, nor does the patched server (see .vscode/settings.json), which checks this file
+# for real.
 when not declared(nimscript):
   # what NimScript doesn't have already (it has getEnv, fileExists, findExe, mkDir, ...)
   from std/os import `/`, parentDir, getHomeDir, quoteShell, relativePath

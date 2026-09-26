@@ -48,11 +48,9 @@ proc updatePickMessage(ctx: var Context; mouse: MouseState) =
               &"pick result y: {pick.pointWorld.y:.6f}"
 
 # Draw with the TTF font once it's loaded, the built-in font until then.
+# (Drawing with a None handle will fall back to default)
 proc drawText(font: Font; text: string; x, y: float; size: int; color: Color) =
-  if not font.isNone:
-    font.drawText(text, x, y, size.float, color)
-  else:
-    drawText(text, x.int, y.int, size, color)
+  font.drawText(text, x, y, size.float, color)
 
 proc drawCenteredMessage(ctx: Context) =
   let screen = getScreenSize()
@@ -144,7 +142,9 @@ proc onUnload*(ctx: var Context) {.reloadable.} =
 
 proc onFrame*(ctx: var Context; dt, tickFraction: float) {.reloadable.} =
   let mouse = getMouseState()
-  #echo mouse
+  var keyState = getKeyboardState()
+  if isKeyPressed(Key.A):
+    echo &"x:{mouse.x}, y:{mouse.y}"
 
   # Escape quits on desktop; a web page has nothing to quit to.
   when not defined(emscripten):

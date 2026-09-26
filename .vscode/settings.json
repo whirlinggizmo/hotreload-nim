@@ -3,7 +3,7 @@
         "*.nimble": "nimble"
     },
     "nim.useNimCheck": true,
-    // patched builds (~/projects/github/nim-lang, branches off nimlangserver 1.14.0 and Nim
+    // patched builds (~/projects/github/robknopf, branches off nimlangserver 1.14.0 and Nim
     // 2.2.12): the server's project checks end (stock, its stdin thread swallows SIGCHLD,
     // so a `nim check` is never seen to finish: the "Checking project" spinner for good),
     // a check asked for during another is queued rather than dropped, and .nims files are
@@ -13,12 +13,13 @@
     // Without it, the stock tools: checks that never end, and no checking of config.nims.
     // Moved to the user settings (~/.config/Code/User/settings.json): the path is this
     // machine's, not the project's
-    // "nim.lsp.path": "/home/rknopf/projects/github/nim-lang/nimlangserver-patched",
+    // "nim.lsp.path": "/home/rknopf/projects/github/robknopf/nimlangserver-patched",
     // one nimsuggest for the app, not one per file opened: its modules and the host's
     // are all seen from simple.nim
     "nim.projectMapping": [
         { "projectFile": "simple/src/simple.nim", "fileRegex": "(simple/src|host)/.*\\.nim$" }
     ],
+    "nim.buildOnSave": false,
 
     "editor.renderWhitespace": "all",
     "editor.tabSize": 2
