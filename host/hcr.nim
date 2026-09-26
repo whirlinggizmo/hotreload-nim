@@ -10,10 +10,14 @@
 ## What the script keeps between calls lives in a context object it is passed, which a
 ## reload keeps. Its type can change while running: the module that declares it ends with
 ## `hotContext(Context)`, and when a reloaded script's Context differs, the host has the
-## old script write its context out and the new one read back what still fits (migrate.nim). A replaced library stays loaded, so a callback the script gave
-## wgrender keeps working, but it runs the code it came from: fine for a one-off (an asset
-## task), not for one that keeps firing (setFrame, events). The host registers those and
-## calls the script's current code.
+## old script write its context out and the new one read back what still fits
+## (migrate.nim). A module's own globals can survive a reload too: `var x {.hot.}: T`
+## (hotvars.nim).
+##
+## A replaced library stays loaded, so a callback the script gave wgrender keeps working,
+## but it runs the code it came from: fine for a one-off (an asset task), not for one that
+## keeps firing (setFrame, events). The host registers those and calls the script's
+## current code.
 ##
 ## Around a swap, the host is told twice: `onUnload` just before, while the old code is
 ## still what it calls, and `onLoad` just after, to look the new library's procs up. Both
@@ -22,8 +26,8 @@
 ## fails to build or load: the old code runs on.
 
 import std/[hashes, macros]
-import ./migrate
-export migrate
+import ./hotvars
+export hotvars
 
 macro reloadable*(def: untyped): untyped =
   ## a proc the host calls: exported from the script's library in a script build, an

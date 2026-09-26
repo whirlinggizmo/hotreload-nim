@@ -21,6 +21,9 @@ const
   BobSpeed = 1.0
   BobHeight = 1.5
 
+var reloads {.hot.} = 0
+  ## how many times this code has been reloaded: a global that survives it (hot build)
+
 proc update(ctx: var Context; dt: float) =
   ctx.elapsed += dt
   ctx.countdownTimer -= dt
@@ -67,6 +70,7 @@ proc drawOverlay(ctx: Context; mouse: MouseState) =
            &"b:[{mouse.left}, {mouse.right}, {mouse.middle}]",
            10, 76, DebugFontSize, ColorBlack)
   drawText(ctx.debugFont, ctx.platformText, 10, 96, DebugFontSize, ColorBlack)
+  drawText(ctx.debugFont, &"Reloads: {reloads}", 10, 116, DebugFontSize, ColorBlack)
 
   ctx.debugFont.drawFps(10, 10, DebugFontSize, ctx.greyAlpha)
 
@@ -130,7 +134,9 @@ proc onInit*(ctx: var Context) {.reloadable.} =
 proc onLoad*(ctx: var Context; reloaded: bool) {.reloadable.} =
   ## once at startup (reloaded = false), then after each reload, on the new code: set up
   ## or fix up what the new code expects of the context
-  if reloaded: echo "simple: reloaded"
+  if reloaded:
+    inc reloads
+    echo "simple: reloaded (", reloads, ")"
 
 proc onUnload*(ctx: var Context) {.reloadable.} =
   ## on the old code, just before a reload replaces it

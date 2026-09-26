@@ -1,8 +1,12 @@
 ## Carrying a value across a change to its type, from one build of a program to the next:
-## the old build writes it out field by field, each with its name and its type's name, and
-## the new build reads back each field it still has, by the same name and type. A field
-## that's gone is dropped; a new one, or one whose type changed (by name: an array that
-## changed length is another type), keeps its default.
+## the old build writes it out field by field, each with its name and its kind, and the new
+## build reads back each field it still has, by the same name and kind. A field that's gone
+## is dropped; a new one, or one whose kind changed, keeps its default.
+##
+## A kind is what a value is made of: an object, a tuple, a seq or an array matches another
+## of its sort, whatever its type is called or holds, and what's inside is matched the same
+## way, field by field or element by element (an array keeps what fits). Anything else
+## matches by its type's name: an int is not a float, a Font is not a Model.
 ##
 ## Numbers, bools, chars, enums, sets, distinct types of those (wgrender's handles),
 ## strings, and seqs, arrays, objects and tuples of them. Refs, pointers and closures
@@ -33,6 +37,14 @@ proc getStr(s: string; pos: var int): string =
   result = s[pos ..< pos + n]
   inc pos, n
 
+proc kind[T](x: T): string =
+  ## what `load` matches a field by
+  when T is object: "object"
+  elif T is tuple: "tuple"
+  elif T is seq: "seq"
+  elif T is array: "array"
+  else: $T
+
 proc save*[T](s: var string; x: T) =
   ## appends `x` to `s`, for `load` in a build whose T may differ
   when T is distinct:
@@ -43,7 +55,7 @@ proc save*[T](s: var string; x: T) =
     s.putLen(n)
     for name, v in fieldPairs(x):
       s.putStr(name)
-      s.putStr($typeof(v))
+      s.putStr(kind(v))
       var one = ""
       save(one, v)
       s.putStr(one)
@@ -78,7 +90,7 @@ proc load*[T](s: string; x: var T) =
       let typ = s.getStr(pos)
       fields[name] = (typ, s.getStr(pos))
     for name, v in fieldPairs(x):
-      if name in fields and fields[name][0] == $typeof(v):
+      if name in fields and fields[name][0] == kind(v):
         load(fields[name][1], v)
   elif T is string:
     x = s
