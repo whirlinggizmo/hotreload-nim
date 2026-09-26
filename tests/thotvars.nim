@@ -1,5 +1,5 @@
 import std/unittest
-import hotvars
+import nimhcr/hotvars
 import hotkeys/a/state as sa, hotkeys/b/state as sb
 
 var count {.hot.} = 3

@@ -1,11 +1,12 @@
 ## wgrender's simple example, hot reloaded: setup, assets, each frame's update, picking
 ## and drawing. Edit it while `nim hot` runs (BobSpeed, the colors, the text) and it's
-## rebuilt and swapped in (host/hcr.nim). Its state is hot globals, which a reload keeps;
-## the program itself, which wires the code to wgrender, is the hotMain block at the end.
+## rebuilt and swapped in (nimhcr: src/nimhcr/hcr.nim). Its state is hot globals, which a
+## reload keeps; the program itself, which wires the code to wgrender, is the hotMain
+## block at the end.
 
 import std/[math, strformat]
 import wgr
-import hcr
+import nimhcr
 
 const
   DebugFontPath = "fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"

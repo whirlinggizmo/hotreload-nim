@@ -26,25 +26,25 @@
         {
             "label": "simple: build hot",
             "type": "shell",
-            "command": "nim c -d:hcrHost --out:out/linux/hot/simple src/simple.nim",
-            "options": { "cwd": "${workspaceFolder}/simple" },
+            "command": "nim build hot",
+            "options": { "cwd": "${workspaceFolder}/examples/simple" },
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false
             },
         },
         {
             "label": "simple: build debug",
             "type": "shell",
-            "command": "nim c --out:out/linux/debug/simple src/simple.nim",
-            "options": { "cwd": "${workspaceFolder}/simple" },
+            "command": "nim build debug",
+            "options": { "cwd": "${workspaceFolder}/examples/simple" },
             "group": "build"
         },
         {
             "label": "simple: build release",
             "type": "shell",
-            "command": "nim c -d:release --out:out/linux/release/simple src/simple.nim",
-            "options": { "cwd": "${workspaceFolder}/simple" },
+            "command": "nim build release",
+            "options": { "cwd": "${workspaceFolder}/examples/simple" },
             "group": "build"
         }
     ]

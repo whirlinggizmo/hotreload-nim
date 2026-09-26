@@ -14,10 +14,10 @@
     // Moved to the user settings (~/.config/Code/User/settings.json): the path is this
     // machine's, not the project's
     // "nim.lsp.path": "/home/rknopf/projects/github/robknopf/nimlangserver-patched",
-    // one nimsuggest for the app, not one per file opened: its modules and the host's
+    // one nimsuggest for the example, not one per file opened: its modules and nimhcr's
     // are all seen from simple.nim
     "nim.projectMapping": [
-        { "projectFile": "simple/src/simple.nim", "fileRegex": "(simple/src|host)/.*\\.nim$" }
+        { "projectFile": "examples/simple/src/simple.nim", "fileRegex": "(examples/simple/src|src/nimhcr)/.*\\.nim$" }
     ],
     "nim.buildOnSave": false,
 
