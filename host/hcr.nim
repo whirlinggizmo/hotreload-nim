@@ -1,0 +1,137 @@
+## Hot code reload for a wgrender program: a script module that a running host rebuilds
+## and swaps in when its source changes.
+##
+## The script marks what the host calls {.reloadable.}. Everywhere but a hot build it is
+## an ordinary module the host imports: release and web builds compile it in. With
+## -d:hcrHost, the host starts on that compiled-in code too, and the first time a source
+## file changes it builds the script as a shared library (-d:hcrScript) in the background
+## and switches to it.
+##
+## What the script keeps between calls lives in the host (a context object it is passed),
+## so a reload keeps it. A replaced library stays loaded, so a callback the script gave
+## wgrender keeps working, but it runs the code it came from: fine for a one-off (an asset
+## task), not for one that keeps firing (setFrame, events). The host registers those and
+## calls the script's current code.
+##
+## Around a swap, the host is told twice: `onUnload` just before, while the old code is
+## still what it calls, and `onLoad` just after, to look the new library's procs up. The
+## host can pass each on to the script (wgrhost calls the app's own onUnload and onLoad).
+## Neither runs for a library that fails to build or load, or that is refused: the old
+## code runs on.
+
+import std/macros
+
+macro reloadable*(def: untyped): untyped =
+  ## a proc the host calls: exported from the script's library in a script build, an
+  ## ordinary proc otherwise; cdecl in both so the two have one type
+  result = def
+  result.addPragma ident"cdecl"
+  when defined(hcrScript):
+    result.addPragma ident"exportc"
+    result.addPragma ident"dynlib"
+
+when defined(hcrHost):
+  import std/[dynlib, os, osproc, times]
+
+  const
+    RTLD_NOW = 2.cint
+    # the library's own symbols before the host's: its Nim runtime, not the host's
+    RTLD_DEEPBIND = 8.cint
+
+  proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
+  proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
+
+  type
+    HotScript* = ref object
+      source: string            ## the script's module
+      buildDir: string
+      contextStamp: int         ## the host's Context; a library built from another is refused
+      onLoad: proc ()           ## the host looks its procs up again
+      onUnload: proc ()         ## the old code's last word, before the swap
+      lib: LibHandle
+      version: int
+      build: Process
+      building: string          ## the library the running build makes
+      changedSince: bool        ## a source changed while building: build again after
+      mtimes: seq[(string, Time)]
+      nextCheck: float
+
+  proc sources(h: HotScript): seq[(string, Time)] =
+    ## the .nim files beside the script's, and when each last changed
+    for path in walkFiles(h.source.parentDir / "*.nim"):
+      result.add (path, getLastModificationTime(path))
+
+  const hcrBuildDir {.strdefine.} = ""
+    ## where the script's builds go (the libraries and their Nim cache), when the host's
+    ## config names one: -d:hcrBuildDir=<dir>
+
+  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (); onUnload: proc () = nil;
+                     buildDir = (if hcrBuildDir.len > 0: hcrBuildDir
+                                 else: source.parentDir.parentDir / "build/script")): HotScript =
+    ## watches the .nim files in `source`'s directory. `onLoad` runs after each swap:
+    ## look the script's procs up there, with `lookup`. `onUnload` runs before it, once
+    ## the new library is loaded and accepted
+    result = HotScript(source: source, buildDir: buildDir, contextStamp: contextStamp,
+                       onLoad: onLoad, onUnload: onUnload)
+    result.mtimes = result.sources()
+    createDir(buildDir)
+    echo "hcr: watching " & source.parentDir & " for changes to " & source.extractFilename
+
+  proc symbol*(h: HotScript; name: string): pointer =
+    result = h.lib.symAddr(name)
+    if result == nil: raise newException(LibraryError, "hcr: the script has no " & name)
+
+  template lookup*[T: proc](h: HotScript; p: T): T =
+    ## the reloaded library's `p`, by its name: `frameProc = script.lookup(onFrame)`
+    cast[T](h.symbol(astToStr(p)))
+
+  proc startBuild(h: HotScript) =
+    inc h.version
+    h.building = h.buildDir / "lib" & h.source.splitFile.name & "_" & $h.version & ".so"
+    var args = @["c", "-d:hcrScript", "--nimcache:" & h.buildDir / "nimcache",
+                 "--out:" & h.building, h.source]
+    when defined(release): args.insert("-d:release", 1)
+    echo "hcr: building " & h.source.extractFilename
+    # its output (errors) goes straight to this terminal
+    h.build = startProcess("nim", h.source.parentDir, args, options = {poUsePath, poParentStreams})
+
+  proc swap(h: HotScript) =
+    let lib = dlopen(h.building.cstring, RTLD_NOW or RTLD_DEEPBIND)
+    if lib == nil:
+      echo "hcr: can't load " & h.building & ": " & $dlerror()
+      return
+    # --noMain: the library's Nim runtime and globals are set up by its NimMain
+    cast[proc () {.cdecl, raises: [].}](lib.symAddr("NimMain"))()
+    let stamp = lib.symAddr("hcrContextStamp")
+    if stamp == nil or cast[proc (): int {.cdecl.}](stamp)() != h.contextStamp:
+      echo "hcr: the script's Context is not the host's (context.nim changed): restart to use it"
+      unloadLib(lib)
+      return
+    if h.onUnload != nil: h.onUnload()
+    # The old library stays loaded: strings in the context may still point at its string
+    # literals, and what it handed out at its code. A few hundred KB per reload.
+    h.lib = lib
+    h.onLoad()
+    echo "hcr: reloaded " & h.source.extractFilename & " (" & h.building.extractFilename & ")"
+
+  proc update*(h: HotScript; now: float) =
+    ## call every frame: checks the sources a few times a second, and swaps a finished
+    ## build in
+    if h.build != nil:
+      let code = h.build.peekExitCode()
+      if code == -1: discard
+      else:
+        h.build.close()
+        h.build = nil
+        if code == 0: h.swap()
+        else: echo "hcr: build failed; still running the last one"
+        if h.changedSince:
+          h.changedSince = false
+          h.startBuild()
+    if now < h.nextCheck: return
+    h.nextCheck = now + 0.25
+    let current = h.sources()
+    if current != h.mtimes:
+      h.mtimes = current
+      if h.build != nil: h.changedSince = true
+      else: h.startBuild()

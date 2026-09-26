@@ -1,0 +1,59 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // needs the CodeLLDB extension (vadimcn.vscode-lldb). Breakpoints in
+            // simple.nim hit the compiled-in copy at first, then each reloaded .so.
+            "type": "lldb",
+            "request": "launch",
+            "name": "simple (hot, lldb)",
+            "program": "${workspaceFolder}/simple/out/linux/hot/simple",
+            "args": [],
+            "cwd": "${workspaceFolder}/simple",
+            "preLaunchTask": "simple: build hot",
+            "initCommands": [
+                "command script import ${userHome}/.choosenim/toolchains/nim-2.2.12/tools/debug/nimlldb.py"
+            ]
+        },
+        {
+            // gdb through nim_debugger_mi (the Nim Debugger extension, yesdrx.nim-debugger),
+            // which demangles Nim's names; the cppdbg type is Microsoft's C/C++ extension
+            // (ms-vscode.cpptools)
+            "type": "cppdbg",
+            "request": "launch",
+            "name": "simple (hot, gdb)",
+            "program": "${workspaceFolder}/simple/out/linux/hot/simple",
+            "args": [],
+            "cwd": "${workspaceFolder}/simple",
+            "preLaunchTask": "simple: build hot",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
+            "miDebuggerArgs": ""
+        },
+        {
+            // the app compiled in, no hot reload: breakpoints stay where they are
+            "type": "lldb",
+            "request": "launch",
+            "name": "simple (debug, lldb)",
+            "program": "${workspaceFolder}/simple/out/linux/debug/simple",
+            "args": [],
+            "cwd": "${workspaceFolder}/simple",
+            "preLaunchTask": "simple: build debug",
+            "initCommands": [
+                "command script import ${userHome}/.choosenim/toolchains/nim-2.2.12/tools/debug/nimlldb.py"
+            ]
+        },
+        {
+            "type": "cppdbg",
+            "request": "launch",
+            "name": "simple (debug, gdb)",
+            "program": "${workspaceFolder}/simple/out/linux/debug/simple",
+            "args": [],
+            "cwd": "${workspaceFolder}/simple",
+            "preLaunchTask": "simple: build debug",
+            "MIMode": "gdb",
+            "miDebuggerPath": "${userHome}/.nimble/bin/nim_debugger_mi",
+            "miDebuggerArgs": ""
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "*.nimble": "nimble"
+    },
+    "nim.useNimCheck": true,
+
+    "editor.renderWhitespace": "all",
+    "editor.tabSize": 2
+}

@@ -1,0 +1,3 @@
+# what the builds make and their work (nim clean)
+out/
+build/

@@ -1,0 +1,51 @@
+{
+    "version": "2.0.0",
+    "problemMatcher": {
+        "fileLocation": ["absolute"],
+        "pattern": {
+          "regexp": "^(.*\\.nim)\\((\\d+),\\s*(\\d+)\\)\\s+(Error|Warning):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+    },
+    "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "revealProblems": "onProblem",
+        "focus": true,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": true,
+        "close": true
+    },
+    "promptOnClose": false,
+    "tasks": [
+        {
+            "label": "simple: build hot",
+            "type": "shell",
+            "command": "nim c -d:hcrHost --out:out/linux/hot/simple src/simple.nim",
+            "options": { "cwd": "${workspaceFolder}/simple" },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+        },
+        {
+            "label": "simple: build debug",
+            "type": "shell",
+            "command": "nim c --out:out/linux/debug/simple src/simple.nim",
+            "options": { "cwd": "${workspaceFolder}/simple" },
+            "group": "build"
+        },
+        {
+            "label": "simple: build release",
+            "type": "shell",
+            "command": "nim c -d:release --out:out/linux/release/simple src/simple.nim",
+            "options": { "cwd": "${workspaceFolder}/simple" },
+            "group": "build"
+        }
+    ]
+}
