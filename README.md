@@ -18,7 +18,8 @@ src/hotreload/
   migrate.nim            carrying a value from one build's type to another's
   typesig.nim            a type's shape, to tell when it changed
   tasks.nims             the build variants and their tasks, for a program's config.nims
-tests/                   `nimble test`
+tests/                   `nimble test`: the modules' tests, and treload.nim, a smoke test
+                         that builds tests/reload/ hot, runs it and edits it while it runs
 examples/simple/         wgrender's simple example: src/main.nim, the program, and
                          src/simple.nim, the code it reloads
 ```
