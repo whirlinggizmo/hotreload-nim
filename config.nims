@@ -15,7 +15,11 @@ when not declared(nimscript):
 
   const thisDir = currentSourcePath().parentDir()
 
-  switch("hints", "off")
+  # no hints for builds and tasks, but a check keeps them: `nim check` (the editor's, with
+  # nim.useNimCheck) runs as "check", the patched nimsuggest as "idetools", the stock one
+  # with none
+  if getCommand() notin ["check", "idetools", ""]:
+    switch("hints", "off")
 
 
   proc inSimple(t: string; args = "") =
