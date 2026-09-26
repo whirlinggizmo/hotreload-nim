@@ -1,11 +1,11 @@
-## wgrender's simple example, as an app the host runs (host/wgrhost.nim): setup, assets,
-## each frame's update, picking and drawing. Edit it while `nim hot` runs (BobSpeed, the
-## colors, the text) and the host rebuilds it and swaps it in.
+## wgrender's simple example, hot reloaded: setup, assets, each frame's update, picking
+## and drawing. Edit it while `nim hot` runs (BobSpeed, the colors, the text) and it's
+## rebuilt and swapped in (host/hcr.nim). Its state is hot globals, which a reload keeps;
+## the program itself, which wires the code to wgrender, is the hotMain block at the end.
 
 import std/[math, strformat]
 import wgr
-import wgrhost
-import ./context
+import hcr
 
 const
   DebugFontPath = "fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"
@@ -21,128 +21,156 @@ const
   BobSpeed = 1.0
   BobHeight = 1.5
 
-var reloads {.hot.} = 0
-  ## how many times this code has been reloaded: a global that survives it (hot build)
+  AssetBase {.strdefine: "wgrAssetBase".} = "assets"
+    ## beside the page on the web; on the desktop the config names it
 
-proc update(ctx: var Context; dt: float) =
-  ctx.elapsed += dt
-  ctx.countdownTimer -= dt
+var
+  elapsed {.hot.} = 0.0
+  countdownTimer {.hot.} = 0.0
+  debugFont {.hot.}: Font
+  komikaFont {.hot.}: Font
+  greyAlpha {.hot.}: Color
+  sprite {.hot.}: Sprite3d
+  model {.hot.}: Model
+  bgm {.hot.}: Sound
+  camera {.hot.}: Camera3d
+  scene {.hot.}: Scene
+  backgroundColor {.hot.}: Color
+  message {.hot.} = ""
+  platformText {.hot.} = ""
+  reloads {.hot.} = 0
+    ## how many times this code has been reloaded
 
-  if not ctx.model.isNone:
-    ctx.model.animate(dt)
-  if not ctx.sprite.isNone:
-    let y = sin(ctx.elapsed * BobSpeed) * BobHeight + SpriteYOffset
-    ctx.sprite.setPosition(0, y, 0)
+proc requestAsset(name: string; onReady: proc (path: string)) =
+  ## load an asset; `onReady` runs on a later frame with it at `path`, local and ready.
+  ## One that arrives after a reload moved hot globals to new storage is skipped: it's
+  ## the old code's, which would write to their old copies
+  let carries = hotCarries()
+  let onFailed = proc (path: string) = logError("failed to import asset: " & name)
+  let ready = proc (path: string) =
+    if hotCarries() == carries: onReady(path)
+    else: echo "simple: " & name & " arrived after a reload moved hot globals: ask again"
+  if not ensureAssetAsync(name).addTask(ready, onFailed):
+    onFailed(name)
 
-proc updatePickMessage(ctx: var Context; mouse: MouseState) =
-  let pick = ctx.scene.pick(mouse.x.float, mouse.y.float)
+proc update(dt: float) =
+  elapsed += dt
+  countdownTimer -= dt
+
+  if not model.isNone:
+    model.animate(dt)
+  if not sprite.isNone:
+    let y = sin(elapsed * BobSpeed) * BobHeight + SpriteYOffset
+    sprite.setPosition(0, y, 0)
+
+proc updatePickMessage(mouse: MouseState) =
+  let pick = scene.pick(mouse.x.float, mouse.y.float)
   let what =
     if not pick.hit: ""
-    elif pick.handle == ctx.model: "Model"
-    elif pick.handle == ctx.sprite: "Sprite"
+    elif pick.handle == model: "Model"
+    elif pick.handle == sprite: "Sprite"
     else: ""
   if what.len == 0:
-    ctx.message = "Nothing picked!"
+    message = "Nothing picked!"
     return
-  ctx.message = &"{what} pick: Mouse position (mouse.x:{mouse.x}, mouse.y:{mouse.y}) " &
-              &"pick result y: {pick.pointWorld.y:.6f}"
+  message = &"{what} pick: Mouse position (mouse.x:{mouse.x}, mouse.y:{mouse.y}) " &
+            &"pick result y: {pick.pointWorld.y:.6f}"
 
 # Draw with the TTF font once it's loaded, the built-in font until then.
 # (Drawing with a None handle will fall back to default)
 proc drawText(font: Font; text: string; x, y: float; size: int; color: Color) =
   font.drawText(text, x, y, size.float, color)
 
-proc drawCenteredMessage(ctx: Context) =
+proc drawCenteredMessage() =
   let screen = getScreenSize()
   let size =
-    if not ctx.komikaFont.isNone: ctx.komikaFont.measureText(ctx.message, KomikaFontSize)
-    else: (measureText(ctx.message, KomikaFontSize).float, KomikaFontSize.float)
-  drawText(ctx.komikaFont, ctx.message, (screen.x - size.x) / 2, (screen.y - size.y) / 2,
+    if not komikaFont.isNone: komikaFont.measureText(message, KomikaFontSize)
+    else: (measureText(message, KomikaFontSize).float, KomikaFontSize.float)
+  drawText(komikaFont, message, (screen.x - size.x) / 2, (screen.y - size.y) / 2,
            KomikaFontSize, ColorBlue)
 
-proc drawOverlay(ctx: Context; mouse: MouseState) =
-  drawText(ctx.debugFont, &"Remaining: {ctx.countdownTimer:.2f}", 10, 36, DebugFontSize, ColorBlack)
-  drawText(ctx.debugFont, &"Elapsed: {ctx.elapsed:.2f}", 10, 56, DebugFontSize, ColorBlack)
-  drawText(ctx.debugFont,
+proc drawOverlay(mouse: MouseState) =
+  drawText(debugFont, &"Remaining: {countdownTimer:.2f}", 10, 36, DebugFontSize, ColorBlack)
+  drawText(debugFont, &"Elapsed: {elapsed:.2f}", 10, 56, DebugFontSize, ColorBlack)
+  drawText(debugFont,
            &"Mouse: ({mouse.x}, {mouse.y}) w:{mouse.wheel:.1f} " &
            &"b:[{mouse.left}, {mouse.right}, {mouse.middle}]",
            10, 76, DebugFontSize, ColorBlack)
-  drawText(ctx.debugFont, ctx.platformText, 10, 96, DebugFontSize, ColorBlack)
-  drawText(ctx.debugFont, &"Reloads: {reloads}", 10, 116, DebugFontSize, ColorBlack)
+  drawText(debugFont, platformText, 10, 96, DebugFontSize, ColorBlack)
+  drawText(debugFont, &"Reloads: {reloads}", 10, 116, DebugFontSize, ColorBlack)
 
-  ctx.debugFont.drawFps(10, 10, DebugFontSize, ctx.greyAlpha)
+  debugFont.drawFps(10, 10, DebugFontSize, greyAlpha)
 
-proc onInit*(ctx: var Context) {.reloadable.} =
+proc onInit() {.reloadable.} =
   ## once, at startup
   setLogLevel(LogLevel.Warn)
   setTargetFps(60)
 
-  ctx.countdownTimer = 30.0
-  ctx.message = "Hello from wgrender simple (Nim)!"
-  ctx.platformText = "Platform: " & getPlatform()
+  countdownTimer = 30.0
+  message = "Hello from wgrender simple (Nim)!"
+  platformText = "Platform: " & getPlatform()
 
-  ctx.camera = newCamera3d(Projection.Perspective) # default fov: pi/4 (45 degrees)
-  ctx.camera.setView(position = (12.0, 12.0, 12.0), target = (0.0, 1.0, 0.0))
-  ctx.scene = newScene()
-  ctx.scene.setActiveCamera(ctx.camera)
+  camera = newCamera3d(Projection.Perspective) # default fov: pi/4 (45 degrees)
+  camera.setView(position = (12.0, 12.0, 12.0), target = (0.0, 1.0, 0.0))
+  scene = newScene()
+  scene.setActiveCamera(camera)
 
   # same lighting as librl's c-simple: a directional light plus ambient 0.25
   let sun = newLight(LightKind.Directional)
   sun.setDirection((-0.6, -1.0, -0.5))
   sun.setIntensity(3.0)
-  ctx.scene.add(sun)
-  ctx.scene.setAmbient(ColorWhite, 0.25)
-  ctx.backgroundColor = rgba(245, 245, 245, 255)
-  ctx.greyAlpha = rgba(0, 0, 0, 128)
+  scene.add(sun)
+  scene.setAmbient(ColorWhite, 0.25)
+  backgroundColor = rgba(245, 245, 245, 255)
+  greyAlpha = rgba(0, 0, 0, 128)
 
   # each asset, once it's local and ready at `path`: create the resource, then the object
-  ctx.requestAsset(MusicPath) do (ctx: var Context; path: string):
+  requestAsset(MusicPath) do (path: string):
     let audio = newAudio(path)
-    ctx.bgm = newSound(audio)
+    bgm = newSound(audio)
     audio.release() # the sound holds its own reference
-    ctx.bgm.setLoop(true)
-    ctx.bgm.play()
+    bgm.setLoop(true)
+    bgm.play()
 
-  ctx.requestAsset(CharacterPath) do (ctx: var Context; path: string):
+  requestAsset(CharacterPath) do (path: string):
     let mesh = newMesh(path)
-    ctx.model = newModel(mesh)
+    model = newModel(mesh)
     mesh.release() # the model holds its own reference
-    ctx.model.setAnimation(1)
-    ctx.model.setAnimationSpeed(1.0)
-    ctx.model.setAnimationLoop(true)
-    ctx.model.setPosition(0, 0, 0)
-    ctx.model.setTint(ColorRaywhite)
-    ctx.scene.add(ctx.model)
+    model.setAnimation(1)
+    model.setAnimationSpeed(1.0)
+    model.setAnimationLoop(true)
+    model.setPosition(0, 0, 0)
+    model.setTint(ColorRaywhite)
+    scene.add(model)
 
-  ctx.requestAsset(SpritePath) do (ctx: var Context; path: string):
+  requestAsset(SpritePath) do (path: string):
     let texture = newTexture(path)
-    ctx.sprite = newSprite3d(texture)
+    sprite = newSprite3d(texture)
     texture.release() # the sprite holds its own reference
-    ctx.sprite.setFacing(SpriteFacing.Free) # librl's default: oriented by its rotation
-    ctx.sprite.setPosition(0, SpriteYOffset, 0)
-    ctx.sprite.setTint(ColorRaywhite)
-    ctx.scene.add(ctx.sprite)
+    sprite.setFacing(SpriteFacing.Free) # librl's default: oriented by its rotation
+    sprite.setPosition(0, SpriteYOffset, 0)
+    sprite.setTint(ColorRaywhite)
+    scene.add(sprite)
 
   # Fonts are sized per draw call in wgrender, so one font handle serves any size.
-  ctx.requestAsset(DebugFontPath) do (ctx: var Context; path: string):
-    ctx.debugFont = newFont(path)
-  ctx.requestAsset(KomikaFontPath) do (ctx: var Context; path: string):
-    ctx.komikaFont = newFont(path)
+  requestAsset(DebugFontPath) do (path: string):
+    debugFont = newFont(path)
+  requestAsset(KomikaFontPath) do (path: string):
+    komikaFont = newFont(path)
 
-proc onLoad*(ctx: var Context; reloaded: bool) {.reloadable.} =
+proc onLoad(reloaded: bool) {.reloadable.} =
   ## once at startup (reloaded = false), then after each reload, on the new code: set up
-  ## or fix up what the new code expects of the context
+  ## or fix up what the new code expects
   if reloaded:
     inc reloads
     echo "simple: reloaded (", reloads, ")"
 
-proc onUnload*(ctx: var Context) {.reloadable.} =
+proc onUnload() {.reloadable.} =
   ## on the old code, just before a reload replaces it
   echo "simple: unloading"
 
-proc onFrame*(ctx: var Context; dt, tickFraction: float) {.reloadable.} =
+proc onFrame(dt, tickFraction: float) {.reloadable.} =
   let mouse = getMouseState()
-  var keyState = getKeyboardState()
   if isKeyPressed(Key.A):
     echo &"x:{mouse.x}, y:{mouse.y}"
 
@@ -151,15 +179,35 @@ proc onFrame*(ctx: var Context; dt, tickFraction: float) {.reloadable.} =
     if isKeyPressed(Key.Escape):
       requestQuit()
 
-  ctx.update(dt)
-  ctx.updatePickMessage(mouse)
+  update(dt)
+  updatePickMessage(mouse)
 
   beginFrame()
-  clearBackground(ctx.backgroundColor)
-  ctx.scene.draw()
-  ctx.drawCenteredMessage()
-  ctx.drawOverlay(mouse)
+  clearBackground(backgroundColor)
+  scene.draw()
+  drawCenteredMessage()
+  drawOverlay(mouse)
   endFrame()
 
-runApp("simple (wgrender, Nim, hot reload)", 1024, 1280,
-        {WindowFlag.Msaa4x, WindowFlag.Resizable})
+hotMain:
+  # the program: wgrender's init and frame callbacks, which call the code above (its
+  # latest version, in a hot build)
+  let hot = hotHost()
+  hot.beforeReload = proc () = onUnload()
+  hot.afterReload = proc () = onLoad(reloaded = true)
+
+  initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
+             {WindowFlag.Msaa4x, WindowFlag.Resizable})
+  setInit(proc () =
+    setAssetHost(AssetBase)
+    setAssetManifest(AssetManifestName)
+    onInit()
+    onLoad(reloaded = false))
+  setFrame(proc (dt, tickFraction: float) =
+    hot.update()
+    onFrame(dt, tickFraction))
+  let status = run()
+  # On the web wgr_run returns at once and the browser drives the frames, so don't
+  # exit() here: that would tear the program down.
+  when not defined(emscripten):
+    quit status

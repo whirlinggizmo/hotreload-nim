@@ -1,89 +1,169 @@
-## Hot code reload for a wgrender program: a script module that a running host rebuilds
-## and swaps in when its source changes.
+## Hot code reload for a Nim program: the program runs, and when a source file changes
+## it rebuilds its code as a shared library in the background (-d:hcrScript) and swaps it
+## in, without stopping. Nothing here knows what the program is: it calls its own code,
+## and hcr keeps that code current.
 ##
-## The script marks what the host calls {.reloadable.}. Everywhere but a hot build it is
-## an ordinary module the host imports: release and web builds compile it in. With
-## -d:hcrHost, the host starts on that compiled-in code too, and the first time a source
-## file changes it builds the script as a shared library (-d:hcrScript) in the background
-## and switches to it.
+## Mark the procs the program calls into {.reloadable.}. In a hot build (-d:hcrHost) each
+## is a stub that calls the latest library's version, so `onFrame(dt)` in a frame
+## callback runs whatever onFrame was last saved. Everywhere else (debug, release, web)
+## it's an ordinary proc, called directly.
 ##
-## What the script keeps between calls lives in a context object it is passed, which a
-## reload keeps. Its type can change while running: the module that declares it ends with
-## `hotContext(Context)`, and when a reloaded script's Context differs, the host has the
-## old script write its context out and the new one read back what still fits
-## (migrate.nim), and the old script free the old one. A context that holds refs is
-## carried over on every reload: each library has its own Nim runtime, and a ref belongs
-## to the one that made it. When its type hasn't changed that's a copy, quicker: the new
-## script reads the old context in place and makes its own refs. A module's own globals
-## can survive a reload too: `var x {.hot.}: T` (hotvars.nim).
+## What the code keeps between calls lives in hot globals, `var x {.hot.}: T`
+## (hotvars.nim): kept by the host across reloads, and carried over when a reload
+## changes their type. A module's plain globals start over with each reload.
 ##
-## A replaced library stays loaded, so a callback the script gave wgrender keeps working,
-## but it runs the code it came from: fine for a one-off (an asset task), not for one that
-## keeps firing (setFrame, events). The host registers those and calls the script's
-## current code.
+## The program itself, what wires the code to the engine or loop, goes in a `hotMain:`
+## block, which the script's library leaves out:
 ##
-## Around a swap, the host is told twice: `onUnload` just before, while the old code is
-## still what it calls, and `onLoad` just after, to look the new library's procs up. Both
-## are told how the context is carried over (Carry). The host can pass each on to the
-## script (wgrhost calls the app's own onUnload and onLoad). Neither runs for a library that
-## fails to build or load: the old code runs on.
+##   hotMain:
+##     let hot = hotHost()
+##     hot.afterReload = proc () = onLoad(reloaded = true)
+##     setFrame(proc (dt: float) =
+##       hot.update()   # rebuilds and swaps when a source changed
+##       onFrame(dt))   # the latest onFrame
+##
+## A replaced library stays loaded, so a callback its code handed out keeps working, but
+## runs the code it came from: fine for a one-off (an asset arriving), not for one that
+## keeps firing (a frame callback), which the program registers and points at a
+## reloadable. If a reload has moved a hot global to new storage since the callback was
+## made, what it writes there is lost: `hotCarries()` tells it.
+##
+## A reload whose code changed a reloadable's signature (its parameters or result) is
+## refused: the program would call it the old way. Restart to run it.
 
-import std/[hashes, macros]
+import std/macros
 import ./hotvars
 export hotvars
+when defined(hcrHost) or defined(hcrScript):
+  import std/hashes
 
-type Carry* = enum
-  ## what a reload does with the context
-  carryNone     ## keeps it: the same type, and no refs
-  carryCopy     ## the same type, with refs: the new code copies it (hcrCopyContext)
-  carryMigrate  ## another type: the old code writes it out (hcrSaveContext), and the
-                ## new code reads back what fits (hcrLoadContext)
+when defined(hcrHost) or defined(hcrScript):
+  # what {.reloadable.} makes a stub or an export from, in a hot build
+  proc cName(key: string): string {.compileTime.} =
+    ## a reloadable's symbol in the script's library
+    result = "hcr_"
+    for c in key:
+      result.add(if c in {'a'..'z', 'A'..'Z', '0'..'9'}: c else: '_')
 
-macro reloadable*(def: untyped): untyped =
-  ## a proc the host calls: exported from the script's library in a script build, an
-  ## ordinary proc otherwise; cdecl in both so the two have one type
-  result = def
-  result.addPragma ident"cdecl"
-  when defined(hcrScript):
-    result.addPragma ident"exportc"
-    result.addPragma ident"dynlib"
+  proc typeOf(d: NimNode): NimNode =
+    ## a parameter's type: the one it's given, or its default value's
+    if d[^2].kind != nnkEmpty: d[^2] else: newCall(ident"typeof", d[^1])
 
-template hotContext*(T: typedesc) =
-  ## call once, after the context type, in the module that declares it: its stamp (T's
-  ## shape, hashed: typeSig) and, for the host, the procs that make a context, carry one
-  ## over to a new one, and free one
-  const ContextStamp* {.inject.} = hash(typeSig(T))
+  proc paramTypes(params: NimNode): seq[NimNode] =
+    ## each parameter's type, one per parameter
+    for i in 1 ..< params.len:
+      let d = params[i]
+      for _ in 0 ..< d.len - 2:
+        result.add typeOf(d)
 
-  proc hcrContextStamp*(): int {.reloadable.} = ContextStamp
-
-  proc hcrContextHoldsRefs*(): bool {.reloadable.} = holdsRefs(T)
-
-  proc hcrNewContext*(): pointer {.reloadable.} =
-    ## a context with T's defaults, which lives until the program ends
-    let c = create(T)
-    c[] = T()
-    c
-
-  proc hcrCopyContext*(old: pointer): pointer {.reloadable.} =
-    ## the old code's context, of the same type, copied with refs of this code's own
-    let c = create(T)
-    copy(c[], cast[ptr T](old))
-    c
-
-  proc hcrSaveContext*(c: pointer): string {.reloadable.} =
-    save(result, cast[ptr T](c)[])
-
-  proc hcrLoadContext*(c: pointer; data: string) {.reloadable.} =
-    load(data, cast[ptr T](c)[])
-
-  proc hcrFreeContext*(c: pointer) {.reloadable.} =
-    ## by the code that made it: what's in it belongs to its runtime
-    reset(cast[ptr T](c)[])
-    dealloc(c)
+  proc sigOfProc(params: NimNode): NimNode =
+    ## an expression for the proc's signature, hashed: its parameters' types (var or not)
+    ## and its result's, by their shape (typeSig)
+    var parts = newLit("")
+    proc part(t: NimNode): NimNode =
+      if t.kind == nnkVarTy: infix(newLit("var "), "&", newCall(bindSym"typeSig", t[0]))
+      else: newCall(bindSym"typeSig", t)
+    for t in paramTypes(params):
+      parts = infix(infix(parts, "&", part(t)), "&", newLit(";"))
+    if params[0].kind != nnkEmpty:
+      parts = infix(infix(parts, "&", newLit("->")), "&", part(params[0]))
+    newCall(ident"static", newCall(bindSym"hash", parts))
 
 when defined(hcrHost):
-  import std/[dynlib, os, osproc, times]
+  import std/[dynlib, os, osproc, strutils, times]
 
+  type Reloadable = object
+    key: string          ## module.name
+    cname: string        ## its symbol in a script's library
+    target: ptr pointer  ## the stub's: what it calls
+    sig: int
+
+  var reloadables: seq[Reloadable]
+
+  proc hcrRegister*(key, cname: string; target: ptr pointer; sig: int) =
+    ## a reloadable's stub, for a swap to point at the new code (called as the program
+    ## starts, by the code {.reloadable.} makes)
+    reloadables.add Reloadable(key: key, cname: cname, target: target, sig: sig)
+
+macro reloadable*(def: untyped): untyped =
+  ## a proc the program calls, which a reload replaces (see the module's doc)
+  if def.kind notin {nnkProcDef, nnkFuncDef}:
+    error("{.reloadable.}: a proc", def)
+  if def[2].kind != nnkEmpty:
+    error("{.reloadable.}: not a generic proc (a library can't export one)", def)
+  when not (defined(hcrScript) or defined(hcrHost)):
+    result = def # an ordinary proc
+  else:
+    let base = if def[0].kind == nnkPostfix: def[0][1] else: def[0]
+    let key = moduleKey(def) & "." & $base
+    let cname = cName(key)
+    let sig = sigOfProc(def.params)
+
+    when defined(hcrScript):
+      # the code, under its symbol, and its signature, for the host to check first
+      result = newStmtList(def)
+      def.addPragma ident"cdecl"
+      def.addPragma newColonExpr(ident"exportc", newLit(cname))
+      def.addPragma ident"dynlib"
+      let sigProc = genSym(nskProc, $base & "Sig")
+      result.add quote do:
+        proc `sigProc`(): int {.cdecl, exportc: `cname` & "_sig", dynlib.} = `sig`
+    elif defined(hcrHost):
+      # the stub: the program's name for it, which calls through `target`. At first that's
+      # the code compiled in; a swap points it at the new library's
+      let impl = copyNimTree(def)
+      impl[0] = genSym(nskProc, $base & "Impl")
+      impl.addPragma ident"cdecl"
+      var procTy = newNimNode(nnkProcTy)
+      var tyParams = copyNimTree(def.params)
+      for i in 1 ..< tyParams.len:
+        # a proc type has no default values, so the type is spelled out
+        tyParams[i][^2] = typeOf(tyParams[i])
+        tyParams[i][^1] = newEmptyNode()
+      procTy.add tyParams
+      procTy.add nnkPragma.newTree(ident"cdecl")
+      let target = ident($base & "HotTarget")
+      var call = newCall(target)
+      for i in 1 ..< def.params.len:
+        for j in 0 ..< def.params[i].len - 2:
+          call.add def.params[i][j]
+      let stub = copyNimTree(def)
+      stub.body = newStmtList(call)
+      let forward = copyNimTree(def)
+      forward.body = newEmptyNode()
+      let implName = impl[0]
+      let register = bindSym"hcrRegister"
+      result = newStmtList(forward, impl)
+      result.add quote do:
+        var `target`: `procTy` = `implName`
+        `register`(`key`, `cname`, cast[ptr pointer](addr `target`), `sig`)
+      result.add stub
+
+template hotMain*(body: untyped) =
+  ## the program: what calls the reloadable code (see the module's doc). A script's
+  ## library is the reloadable code alone, so it leaves this out
+  when not defined(hcrScript):
+    body
+
+type HotHost* = ref object
+  ## the running program's side of hot reload: `update` it every frame (or loop)
+  beforeReload*: proc ()
+    ## just before a swap, while the old code is what's called (and its hot globals are
+    ## what they were): its last word
+  afterReload*: proc ()
+    ## just after, on the new code
+  when defined(hcrHost):
+    source: string            ## the main module
+    buildDir: string
+    lib: LibHandle
+    version: int
+    build: Process
+    building: string          ## the library the running build makes
+    changedSince: bool        ## a source changed while building: build again after
+    mtimes: seq[(string, Time)]
+    nextCheck: float
+
+when defined(hcrHost):
   const
     RTLD_NOW = 2.cint
     # the library's own symbols before the host's: its Nim runtime, not the host's
@@ -92,55 +172,31 @@ when defined(hcrHost):
   proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
   proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
 
-  type
-    HotScript* = ref object
-      source: string            ## the script's module
-      buildDir: string
-      contextStamp: int         ## the running script's Context: another is carried over
-      onLoad: proc (carry: Carry)   ## the host looks its procs up again
-      onUnload: proc (carry: Carry) ## the old code's last word, before the swap
-      lib: LibHandle
-      version: int
-      build: Process
-      building: string          ## the library the running build makes
-      changedSince: bool        ## a source changed while building: build again after
-      mtimes: seq[(string, Time)]
-      nextCheck: float
+  const hcrBuildDir {.strdefine.} = ""
+    ## where the script's builds go (the libraries and their Nim cache), when the
+    ## program's config names one: -d:hcrBuildDir=<dir>
 
-  proc sources(h: HotScript): seq[(string, Time)] =
-    ## the .nim files in the script's directory and those below it, and when each last
-    ## changed
+  proc sources(h: HotHost): seq[(string, Time)] =
+    ## the .nim files in the main module's directory and below, and when each last changed
     for path in walkDirRec(h.source.parentDir):
       if path.splitFile.ext == ".nim":
         result.add (path, getLastModificationTime(path))
 
-  const hcrBuildDir {.strdefine.} = ""
-    ## where the script's builds go (the libraries and their Nim cache), when the host's
-    ## config names one: -d:hcrBuildDir=<dir>
-
-  proc newHotScript*(source: string; contextStamp: int; onLoad: proc (carry: Carry);
-                     onUnload: proc (carry: Carry) = nil;
-                     buildDir = (if hcrBuildDir.len > 0: hcrBuildDir
-                                 else: source.parentDir.parentDir / "build/script")): HotScript =
-    ## watches the .nim files in `source`'s directory. `onLoad` runs after each swap:
-    ## look the script's procs up there, with `lookup`. `onUnload` runs before it, once
-    ## the new library is loaded. `carry`: what to do with the context (Carry); when it's
-    ## replaced, the old code frees the old one (hcrFreeContext)
-    result = HotScript(source: source, buildDir: buildDir, contextStamp: contextStamp,
-                       onLoad: onLoad, onUnload: onUnload)
+  proc newHotHost*(source: string): HotHost =
+    ## watches the .nim files in `source`'s directory and below, `source` being the
+    ## program's main module (hotHost passes it)
+    result = HotHost(source: source)
+    result.buildDir =
+      if hcrBuildDir.len > 0: hcrBuildDir else: source.parentDir.parentDir / "build/script"
     result.mtimes = result.sources()
-    createDir(buildDir)
+    createDir(result.buildDir)
     echo "hcr: watching " & source.parentDir & " for changes to " & source.extractFilename
 
-  proc symbol*(h: HotScript; name: string): pointer =
-    result = h.lib.symAddr(name)
-    if result == nil: raise newException(LibraryError, "hcr: the script has no " & name)
+  template hotHost*(): HotHost =
+    ## call once, in the main module's hotMain block
+    newHotHost(instantiationInfo(fullPaths = true).filename)
 
-  template lookup*[T: proc](h: HotScript; p: T): T =
-    ## the reloaded library's `p`, by its name: `frameProc = script.lookup(onFrame)`
-    cast[T](h.symbol(astToStr(p)))
-
-  proc startBuild(h: HotScript) =
+  proc startBuild(h: HotHost) =
     inc h.version
     h.building = h.buildDir / "lib" & h.source.splitFile.name & "_" & $h.version & ".so"
     var args = @["c", "-d:hcrScript", "--nimcache:" & h.buildDir / "nimcache",
@@ -150,34 +206,38 @@ when defined(hcrHost):
     # its output (errors) goes straight to this terminal
     h.build = startProcess("nim", h.source.parentDir, args, options = {poUsePath, poParentStreams})
 
-  proc swap(h: HotScript) =
+  proc swap(h: HotHost) =
     let lib = dlopen(h.building.cstring, RTLD_NOW or RTLD_DEEPBIND)
     if lib == nil:
       echo "hcr: can't load " & h.building & ": " & $dlerror()
       return
-    # --noMain: the library's Nim runtime and globals are set up by its NimMain
-    cast[proc () {.cdecl, raises: [].}](lib.symAddr("NimMain"))()
-    let stampProc = lib.symAddr("hcrContextStamp")
-    if stampProc == nil:
-      echo "hcr: " & h.building & " has no hcrContextStamp (hotContext): not loading it"
+    # Before any of the new code runs (its NimMain would carry hot globals over): the
+    # program calls each reloadable the way it was compiled to
+    var changed: seq[string]
+    for r in reloadables:
+      let sigName = r.cname & "_sig"
+      let sigProc = lib.symAddr(sigName.cstring)
+      if sigProc != nil and cast[proc (): int {.cdecl.}](sigProc)() != r.sig:
+        changed.add r.key
+    if changed.len > 0:
+      echo "hcr: " & changed.join(", ") & (if changed.len == 1: "'s" else: "'") &
+           " signature changed: restart to run the new code (the last still runs)"
       unloadLib(lib)
       return
-    let stamp = cast[proc (): int {.cdecl.}](stampProc)()
-    let changed = stamp != h.contextStamp
-    let carry =
-      if changed: carryMigrate
-      elif cast[proc (): bool {.cdecl.}](lib.symAddr("hcrContextHoldsRefs"))(): carryCopy
-      else: carryNone
-    if h.onUnload != nil: h.onUnload(carry)
-    # The old library stays loaded: strings in the context may still point at its string
-    # literals, and what it handed out at its code. A few hundred KB per reload.
+    if h.beforeReload != nil: h.beforeReload()
+    # --noMain: the library's Nim runtime and globals are set up by its NimMain
+    cast[proc () {.cdecl, raises: [].}](lib.symAddr("NimMain"))()
+    for r in reloadables:
+      let p = lib.symAddr(r.cname.cstring)
+      if p == nil: echo "hcr: " & r.key & " is gone from the new code: its last version runs on"
+      else: r.target[] = p
+    # The old library stays loaded: strings may still point at its string literals, and
+    # what it handed out at its code. A few hundred KB per reload.
     h.lib = lib
-    h.contextStamp = stamp
-    h.onLoad(carry)
-    if changed: echo "hcr: the context's type changed; carried its fields over"
+    if h.afterReload != nil: h.afterReload()
     echo "hcr: reloaded " & h.source.extractFilename & " (" & h.building.extractFilename & ")"
 
-  proc update*(h: HotScript; now: float) =
+  proc update*(h: HotHost) =
     ## call every frame: checks the sources a few times a second, and swaps a finished
     ## build in
     if h.build != nil:
@@ -191,6 +251,7 @@ when defined(hcrHost):
         if h.changedSince:
           h.changedSince = false
           h.startBuild()
+    let now = epochTime()
     if now < h.nextCheck: return
     h.nextCheck = now + 0.25
     let current = h.sources()
@@ -198,3 +259,11 @@ when defined(hcrHost):
       h.mtimes = current
       if h.build != nil: h.changedSince = true
       else: h.startBuild()
+
+else:
+  template hotHost*(): HotHost =
+    ## outside a hot build, nothing to watch: the code is compiled in
+    HotHost()
+
+  proc update*(h: HotHost) {.inline.} = discard
+    ## outside a hot build, nothing to do
