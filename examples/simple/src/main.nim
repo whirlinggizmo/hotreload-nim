@@ -10,16 +10,13 @@ const AssetBase {.strdefine: "wgrAssetBase".} = "assets"
   ## beside the page on the web; on the desktop the config names it
 
 let reloader = newReloader()
-reloader.beforeReload = proc () = onUnload()
-reloader.afterReload = proc () = onLoad(reloaded = true)
 
 initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
            {WindowFlag.Msaa4x, WindowFlag.Resizable})
 setInit(proc () =
   setAssetHost(AssetBase)
   setAssetManifest(AssetManifestName)
-  onInit()
-  onLoad(reloaded = false))
+  onInit())
 setFrame(proc (dt, tickFraction: float) =
   reloader.update()
   onFrame(dt, tickFraction))

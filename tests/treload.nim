@@ -95,14 +95,20 @@ hotReloadConfig(target)
   test "it runs the code compiled in":
     check r.waitFor("report: v1 ring=true") != ""
 
-  test "an edit to the code reloads, and hot globals are kept":
-    edit("code.nim", "\"v1 ring=\"", "\"v2 ring=\"")
+  test "an edit to the code reloads: its hooks run, and hot globals are kept":
+    edit("code.nim", "const Version = \"v1\"", "const Version = \"v2\"")
+    # in this order: the old code's hook, the program's, the new code's, the program's
+    let wrapUp = r.waitFor("beforeHotReload ")
     let before = r.waitFor("beforeReload count=")
+    let fixUp = r.waitFor("afterHotReload ")
     let after = r.waitFor("afterReload count=")
+    check "beforeHotReload v1 " in wrapUp   # the old code
+    check "afterHotReload v2 " in fixUp     # the new
     check before != "" and after != ""
     if before != "" and after != "":
       check countIn(before) > 0
       check countIn(after) == countIn(before)  # the same storage: nothing ticked between
+      check countIn(fixUp) == countIn(before)
     # the new code, and the ref graph (a cycle) it kept
     check r.waitFor("report: v2 ring=true") != ""
 
@@ -114,7 +120,7 @@ hotReloadConfig(target)
     check after != "" and countIn(after) > 0
     check r.waitFor("report: v2 ring=true extra=new") != ""
 
-  test "an entry's signature changes: refused, and the last code runs on":
+  test "a hot proc's signature changes: refused, and the last code runs on":
     edit("code.nim", "proc report*(): string", "proc report*(verbose = false): string")
     check r.waitFor("report's signature changed") != ""
     check r.quiet("afterReload", 2.0)

@@ -105,8 +105,9 @@ else:
   proc hotMoves*(): int = 0
     ## nothing moves outside a hot build
 
-macro hot*(def: untyped): untyped =
-  ## `var name {.hot.}: T = first`: a global that survives a reload (see the module's doc)
+macro hotGlobal*(def: untyped): untyped =
+  ## `var name {.hot.}: T = first`: a global that survives a reload (reload.nim's `hot`
+  ## passes a var section here; see the module's doc)
   when not (defined(hotReload) or defined(hotReloadLibrary)):
     # an ordinary global, but with its fields' defaults, as in a hot build (a bare
     # `var x: T` leaves them out)

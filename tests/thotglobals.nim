@@ -1,5 +1,5 @@
 import std/unittest
-import hotreload/hotglobals
+import hotreload
 import hotkeys/a/state as sa, hotkeys/b/state as sb
 
 var count {.hot.} = 3

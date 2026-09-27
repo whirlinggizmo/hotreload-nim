@@ -71,7 +71,7 @@ when not declared(nimscript):
     # hotreload's modules: `import hotreload`
     switch("path", currentSourcePath().parentDir.parentDir)
     # which module is the code: the library a hot build makes of it, and where hot globals'
-    # and entries' keys are from
+    # and procs' keys are from
     switch("define", "hotReloadCode=" & target.codeModule)
 
     # no hints for builds and tasks, but a check keeps them: `nim check` (an editor's)

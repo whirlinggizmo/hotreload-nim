@@ -18,12 +18,15 @@
 ##
 ##   # game.nim: the code
 ##   import hotreload
-##   var score {.hot.} = 0                          # kept across reloads
-##   proc onFrame*(dt: float) {.hotEntry.} = ...    # what the program calls
+##   var score {.hot.} = 0                        # kept across reloads
+##   proc onFrame*(dt: float) {.hot.} = ...       # the program's calls get the latest
+##   proc fixUp() {.afterHotReload.} = ...        # run after each reload
 ##
-## {.hotEntry.} marks the procs the program calls into. In a hot build (-d:hotReload) each
-## is a stub that calls the latest library's version. The rest of the code needs nothing:
-## it's all in the new library.
+## {.hot.} on a proc marks one the program calls: in a hot build (-d:hotReload) the
+## program's calls go to the latest library's version (hotprocs.nim). The rest of the
+## code needs nothing: it's all in the new library, which is the code module and all it
+## imports, built as one, whichever of them changed. {.beforeHotReload.} and
+## {.afterHotReload.} are the code's own reload hooks, at most one of each per module.
 ##
 ## What the code keeps between calls lives in hot globals, `var x {.hot.}: T`
 ## (hotglobals.nim): kept across reloads, and carried over when a reload changes their
@@ -31,129 +34,37 @@
 ##
 ## A replaced library stays loaded, so a callback its code handed out keeps working, but
 ## runs the code it came from: fine for a one-off (an asset arriving), not for one that
-## keeps firing (a frame callback), which the program registers and points at an entry. If
-## a reload has moved a hot global to new storage since the callback was made, what it
-## writes there is lost: `hotMoves()` tells it.
+## keeps firing (a frame callback), which the program registers and points at a hot
+## proc. If a reload has moved a hot global to new storage since the callback was made,
+## what it writes there is lost: `hotMoves()` tells it.
 ##
-## A reload whose code changed an entry's signature (its parameters or result) is refused:
-## the program would call it the old way. Restart to run it.
+## A reload whose code changed a hot proc's signature (its parameters or result) is
+## refused: the program would call it the old way. Restart to run it.
 
 import std/macros
 import ./hotglobals
 export hotglobals
-when defined(hotReload) or defined(hotReloadLibrary):
-  import std/hashes
+import ./hotprocs
+export hotprocs
 
-when defined(hotReload) or defined(hotReloadLibrary):
-  # what {.hotEntry.} makes a stub or an export from, in a hot build
-  proc cName(key: string): string {.compileTime.} =
-    ## an entry's symbol in the code's library
-    result = "hotreload_"
-    for c in key:
-      result.add(if c in {'a'..'z', 'A'..'Z', '0'..'9'}: c else: '_')
-
-  proc typeOf(d: NimNode): NimNode =
-    ## a parameter's type: the one it's given, or its default value's
-    if d[^2].kind != nnkEmpty: d[^2] else: newCall(ident"typeof", d[^1])
-
-  proc paramTypes(params: NimNode): seq[NimNode] =
-    ## each parameter's type, one per parameter
-    for i in 1 ..< params.len:
-      let d = params[i]
-      for _ in 0 ..< d.len - 2:
-        result.add typeOf(d)
-
-  proc sigOfProc(params: NimNode): NimNode =
-    ## an expression for the proc's signature, hashed: its parameters' types (var or not)
-    ## and its result's, by their shape (typeSig)
-    var parts = newLit("")
-    proc part(t: NimNode): NimNode =
-      if t.kind == nnkVarTy: infix(newLit("var "), "&", newCall(bindSym"typeSig", t[0]))
-      else: newCall(bindSym"typeSig", t)
-    for t in paramTypes(params):
-      parts = infix(infix(parts, "&", part(t)), "&", newLit(";"))
-    if params[0].kind != nnkEmpty:
-      parts = infix(infix(parts, "&", newLit("->")), "&", part(params[0]))
-    newCall(ident"static", newCall(bindSym"hash", parts))
+macro hot*(def: untyped): untyped =
+  ## `var x {.hot.}: T` or `proc p() {.hot.}`: what the program relies on across reloads.
+  ## A global is kept (hotglobals.nim), a proc's calls from the program follow the new code
+  ## (hotprocs.nim)
+  case def.kind
+  of nnkVarSection: result = newCall(bindSym"hotGlobal", def)
+  of nnkProcDef, nnkFuncDef: result = newCall(bindSym"hotProc", def)
+  else: error("{.hot.}: a global (var) or a proc", def)
 
 when defined(hotReload):
   import std/[dynlib, os, osproc, strutils, times]
 
-  type Entry = object
-    key: string          ## module.name
-    cname: string        ## its symbol in the code's library
-    target: ptr pointer  ## the stub's: what it calls
-    sig: int
-
-  var entries: seq[Entry]
-
-  proc registerEntry*(key, cname: string; target: ptr pointer; sig: int) =
-    ## an entry's stub, for a reload to point at the new code (called as the program
-    ## starts, by what {.hotEntry.} makes)
-    entries.add Entry(key: key, cname: cname, target: target, sig: sig)
-
-macro hotEntry*(def: untyped): untyped =
-  ## a proc the program calls into, which each reload points at the new code (see the
-  ## module's doc)
-  if def.kind notin {nnkProcDef, nnkFuncDef}:
-    error("{.hotEntry.}: a proc", def)
-  if def[2].kind != nnkEmpty:
-    error("{.hotEntry.}: not a generic proc (a library can't export one)", def)
-  when not (defined(hotReloadLibrary) or defined(hotReload)):
-    result = def # an ordinary proc
-  else:
-    let base = if def[0].kind == nnkPostfix: def[0][1] else: def[0]
-    let key = moduleKey(def) & "." & $base
-    let cname = cName(key)
-    let sig = sigOfProc(def.params)
-
-    when defined(hotReloadLibrary):
-      # the code, under its symbol, and its signature, for the program to check first
-      result = newStmtList(def)
-      def.addPragma ident"cdecl"
-      def.addPragma newColonExpr(ident"exportc", newLit(cname))
-      def.addPragma ident"dynlib"
-      let sigProc = genSym(nskProc, $base & "Sig")
-      result.add quote do:
-        proc `sigProc`(): int {.cdecl, exportc: `cname` & "_sig", dynlib.} = `sig`
-    elif defined(hotReload):
-      # the stub: the program's name for it, which calls through `target`. At first that's
-      # the code compiled in; a swap points it at the new library's
-      let impl = copyNimTree(def)
-      impl[0] = genSym(nskProc, $base & "Impl")
-      impl.addPragma ident"cdecl"
-      var procTy = newNimNode(nnkProcTy)
-      var tyParams = copyNimTree(def.params)
-      for i in 1 ..< tyParams.len:
-        # a proc type has no default values, so the type is spelled out
-        tyParams[i][^2] = typeOf(tyParams[i])
-        tyParams[i][^1] = newEmptyNode()
-      procTy.add tyParams
-      procTy.add nnkPragma.newTree(ident"cdecl")
-      let target = ident($base & "HotTarget")
-      var call = newCall(target)
-      for i in 1 ..< def.params.len:
-        for j in 0 ..< def.params[i].len - 2:
-          call.add def.params[i][j]
-      let stub = copyNimTree(def)
-      stub.body = newStmtList(call)
-      let forward = copyNimTree(def)
-      forward.body = newEmptyNode()
-      let implName = impl[0]
-      let register = bindSym"registerEntry"
-      result = newStmtList(forward, impl)
-      result.add quote do:
-        var `target`: `procTy` = `implName`
-        `register`(`key`, `cname`, cast[ptr pointer](addr `target`), `sig`)
-      result.add stub
-
 type Reloader* = ref object
   ## the program's side of hot reload: `update` it every frame (or loop)
   beforeReload*: proc ()
-    ## just before a swap, while the old code is what's called (and its hot globals are
-    ## what they were): its last word
+    ## the program's: just before a swap, after the old code's {.beforeHotReload.} hooks
   afterReload*: proc ()
-    ## just after, on the new code
+    ## the program's: just after, after the new code's {.afterHotReload.} hooks
   when defined(hotReload):
     code: string              ## the code's module: what's built as the library
     program: string           ## the program's main module: watched for nothing
@@ -221,7 +132,7 @@ when defined(hotReload):
       echo "hotreload: can't load " & r.building & ": " & $dlerror()
       return
     # Before any of the new code runs (its NimMain would carry hot globals over): the
-    # program calls each entry the way it was compiled to
+    # program calls each hot proc the way it was compiled to
     var changed: seq[string]
     for e in entries:
       let sigName = e.cname & "_sig"
@@ -233,8 +144,11 @@ when defined(hotReload):
            " signature changed: restart to run the new code (the last still runs)"
       unloadLib(lib)
       return
+    runHooks(hookBefore)  # the old code's
     if r.beforeReload != nil: r.beforeReload()
-    # --noMain: the library's Nim runtime and globals are set up by its NimMain
+    # --noMain: the library's Nim runtime and globals are set up by its NimMain, and its
+    # modules register their hooks as they start
+    forgetHooks()
     cast[proc () {.cdecl, raises: [].}](lib.symAddr("NimMain"))()
     for e in entries:
       let p = lib.symAddr(e.cname.cstring)
@@ -243,6 +157,7 @@ when defined(hotReload):
     # The old library stays loaded: strings may still point at its string literals, and
     # what it handed out at its code. A few hundred KB per reload.
     r.lib = lib
+    runHooks(hookAfter)   # the new code's
     if r.afterReload != nil: r.afterReload()
     echo "hotreload: reloaded " & r.code.extractFilename & " (" & r.building.extractFilename & ")"
 

@@ -1,7 +1,7 @@
 ## The code of wgrender's simple example, which `nim hot` reloads: setup, assets, each
 ## frame's update, picking and drawing. Edit it while it runs (BobSpeed, the colors, the
 ## text) and it's rebuilt and swapped in (hotreload: src/hotreload/reload.nim). Its state
-## is hot globals, which a reload keeps; main.nim, the program, calls its entries.
+## is hot globals, which a reload keeps; main.nim, the program, calls its hot procs.
 
 import std/[math, strformat]
 import wgr
@@ -98,7 +98,7 @@ proc drawOverlay(mouse: MouseState) =
 
   debugFont.drawFps(10, 10, DebugFontSize, greyAlpha)
 
-proc onInit*() {.hotEntry.} =
+proc onInit*() {.hot.} =
   ## once, at startup
   setLogLevel(LogLevel.Warn)
   setTargetFps(60)
@@ -155,18 +155,16 @@ proc onInit*() {.hotEntry.} =
   requestAsset(KomikaFontPath) do (path: string):
     komikaFont = newFont(path)
 
-proc onLoad*(reloaded: bool) {.hotEntry.} =
-  ## once at startup (reloaded = false), then after each reload, on the new code: set up
-  ## or fix up what the new code expects
-  if reloaded:
-    inc reloads
-    echo "simple: reloaded (", reloads, ")"
+proc countReload() {.afterHotReload.} =
+  ## after each reload, on the new code
+  inc reloads
+  echo "simple: reloaded (", reloads, ")"
 
-proc onUnload*() {.hotEntry.} =
+proc sayGoodbye() {.beforeHotReload.} =
   ## on the old code, just before a reload replaces it
   echo "simple: unloading"
 
-proc onFrame*(dt, tickFraction: float) {.hotEntry.} =
+proc onFrame*(dt, tickFraction: float) {.hot.} =
   let mouse = getMouseState()
   if isKeyPressed(Key.A):
     echo &"x:{mouse.x}, y:{mouse.y}"
