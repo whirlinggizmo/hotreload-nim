@@ -24,12 +24,16 @@ module.)
 import hotreload
 import ./game
 
-let reloader = newReloader() # must be created in the main module
+let reloader = newReloader()   # must be created in the main module
 
-game.init() # an example game's init proc, not hot reloaded (proc isn't tagged with the {.hot.} pragma)  
+# the game's init: called once, before any reload, so it isn't {.hot.}
+game.init()
 while running():
-  reloader.update()  # pumps the file watcher, builds the library (on a module change), and reloads it (on a successful build)
-  game.tick()        # an example game's tick proc, hot reloadable (proc tagged with {.hot} pragma). It will be updated on a change+build+reload 
+  # pumps the file watcher, builds the library (on a change), and reloads it (on a
+  # successful build)
+  reloader.update()
+  # the game's tick: {.hot.}, so after a reload this calls the new version
+  game.tick()
 ```
 
 ```nim
@@ -39,11 +43,11 @@ import hotreload
 var score {.hot.} = 0            # kept across reloads
 var player {.hot.}: Player       # kept too, even when Player's fields change
 
-proc init*() = ...            # called once, before any reload: an ordinary proc
-proc tick*() {.hot.} = ...    # called on every frame: the newest version
+proc init*() = ...           # called once, before any reload: an ordinary proc
+proc tick*() {.hot.} = ...   # called on every frame: the newest version
 
-proc onBeforeHotReload() {.beforeHotReload.} = ...   # runs before each reload, on the old code
-proc onAfterHotReload() {.afterHotReload.} = ...   # runs after each reload, on the new code
+proc onBeforeHotReload() {.beforeHotReload.} = ...  # optional: before each reload, on the old code
+proc onAfterHotReload() {.afterHotReload.} = ...    # optional: after each reload, on the new code
 ```
 
 Three pragmas, used in the reloaded modules:
@@ -58,13 +62,12 @@ Three pragmas, used in the reloaded modules:
   with; these follow each reload to the newest version. A proc it calls only before any
   reload (a start-up proc) doesn't need it, and a proc only the library calls doesn't
   either: calls within the library are all to the new code anyway.
-- **`{.beforeHotReload.}` and `{.afterHotReload.}`** mark reload hooks, which the reloader
-  calls: before a reload on the old code, after one on the new. No parameters, and at
-  most one of each per module.
-
-The reloader will call procs tagged with `reloader.beforeHotReload` and
-`reloader.afterHotReload` (if provided) to allow the application to do any housekeeping before/after
-a reload.  Note that only one of each of these can exist per module.
+- **`{.beforeHotReload.}` and `{.afterHotReload.}`** mark optional reload hooks. The
+  reloader calls `{.beforeHotReload.}` on the old code, just before a reload, and
+  `{.afterHotReload.}` on the newly reloaded code. No parameters, and at most one of
+  each per module. Note that these are for reloaded modules; if the main module wants to
+  be notified of reloading, it can use the two callbacks the reloader provides,
+  `reloader.beforeReload = proc () = ...` and `reloader.afterReload = proc () = ...`.
 
 ## The build
 
