@@ -54,7 +54,7 @@ import ./game
 let reloader = newReloader()   # must be created in the main module
 
 game.init()
-while running():
+while true:
   reloader.update()   # pumps the file watcher, library builder, and reloader
   game.tick()
 ```
@@ -76,7 +76,7 @@ proc tick*() {.hot.} = ...
 A hot build is an ordinary `nim c` with two defines:
 
 ```bash
-nim c -r -d:hotReload -d:useMalloc src/main.nim
+nim c -r -d:hotReload -d:useMalloc --out:out/hot/game src/main.nim
 ```
 
 While it runs, every change you save to `src/game.nim`, or to anything it imports, is
@@ -224,8 +224,8 @@ Without `-d:hotReload`, the same sources build one ordinary executable with no
 reloading, which is your debug and release build:
 
 ```bash
-nim c -r src/main.nim             # debug: breakpoints don't go stale
-nim c -r -d:release src/main.nim  # release
+nim c -r --out:out/debug/game src/main.nim                # debug: breakpoints don't go stale
+nim c -r -d:release --out:out/release/game src/main.nim  # release
 ```
 
 A `nim hot` task is a line in your project's `config.nims`:
