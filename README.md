@@ -28,7 +28,7 @@ let reloader = newReloader()
 
 game.onStart()
 while running():
-  reloader.update()   # rebuilds the library and swaps it in, when a source changed
+  reloader.update()   # pumps the file watcher, library builder, and reloader
   game.onFrame()      # the newest onFrame, after a reload too
 ```
 
@@ -131,12 +131,18 @@ one, so it starts over.
 
 ## How it works
 
-The hot build (`-d:hotReload`) watches the sources beside the reloaded module and below
-it, except the main module. When one changes, it rebuilds the reloaded module and every
-module it imports, whichever changed, as one shared library (`-d:hotReloadLibrary`),
-loads it, and points the main module's calls at the new code. Each reload is a new
-library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Windows), replacing the last one
-whole.
+It all happens in `reloader.update()`. A few times a second it checks the sources beside
+the reloaded module and below it (all but the main module) for changes; there's no
+watcher thread. When one has changed, it starts a build of the reloaded module and
+everything it imports as one shared library (`-d:hotReloadLibrary`), in the background,
+and returns: the old code runs on meanwhile, and the compiler's errors go to the
+terminal. The first `update()` after the build is done swaps it in: it loads the
+library, runs the hooks, and points the main module's calls at the new code. So a swap
+only ever happens where the main module calls `update()`, never in the middle of a
+frame. A change made during a build starts another when it's done.
+
+Each reload is a new library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Windows),
+replacing the last one whole.
 
 The executable keeps the hot globals, so the new code gets the same ones. When a reload
 changes a hot global's type, what still fits is carried over, field by field, by name.

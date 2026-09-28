@@ -12,7 +12,7 @@
 ##   import hotreload, game
 ##   let reloader = newReloader()
 ##   while running:
-##     reloader.update()   # rebuilds and swaps when a source changed
+##     reloader.update()   # pumps the file watcher, library builder, and reloader
 ##     game.onFrame(dt)    # the newest onFrame
 ##
 ##   # game.nim, and what it imports: reloaded

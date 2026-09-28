@@ -11,6 +11,6 @@ let reloader = newReloader()
 
 onStart()
 while true:
-  reloader.update()   # rebuilds hello.nim and swaps it in when it changed
+  reloader.update()   # pumps the file watcher, library builder, and reloader
   onTick()
   sleep(250)
