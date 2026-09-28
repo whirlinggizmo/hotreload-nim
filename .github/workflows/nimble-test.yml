@@ -32,4 +32,9 @@ jobs:
           nim --version
           gcc --version
       - name: nimble test
-        run: nimble test -y
+        shell: bash
+        # Homebrew's nimble exits 0 when a test fails, so this goes by nimble's summary
+        run: |
+          set -o pipefail
+          nimble test -y 2>&1 | tee nimble-test.log
+          grep -q "All tests passed" nimble-test.log

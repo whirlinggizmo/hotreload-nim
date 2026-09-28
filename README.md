@@ -36,7 +36,7 @@ save, and the next greeting is the new one:
 
 ```
 Hello, world! (ticks: 12, since the last reload: 12)
-hotreload: building hello.nim
+hotreload: building hello.nim (hello.nim changed)
 hello: reloaded
 hotreload: reloaded hello.nim (libhello_1.so; .dll on Windows, .dylib on macOS)
 Howdy, world! (ticks: 20, since the last reload: 2)
@@ -179,10 +179,10 @@ Each build goes to `out/<platform>/<build>/<name>`, and its Nim cache to
 
 Everything happens in `reloader.update()`; there's no watcher thread. A few times a
 second, `update()` checks the sources in the reloaded module's directory and below it
-(except the main module) for changes. When one has changed, it starts a build of the
-reloaded modules as one shared library (`-d:hotReloadLibrary`) in the background, and
-returns. The old code keeps running in the meantime, and any compiler errors go to the
-terminal.
+(except the main module) for changes. Once they've changed and then stopped changing, it
+starts a build of the reloaded modules as one shared library (`-d:hotReloadLibrary`) in
+the background, and returns. The old code keeps running in the meantime, and any
+compiler errors go to the terminal.
 
 The first `update()` after the build finishes swaps the new library in. It loads the
 library, runs the hooks, and points the main module's calls at the new code. As such, a

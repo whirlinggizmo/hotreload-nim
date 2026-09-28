@@ -64,6 +64,8 @@ type Reloader* = ref object
     build: Process
     building: string          ## the library the running build makes
     changedSince: bool        ## a source changed while building: build again after
+    changed: seq[string]      ## the sources that changed since the last build started
+    settling: bool            ## a source changed: build when they've stopped changing
     mtimes: seq[(string, Time)]
     nextCheck: float
 
@@ -131,12 +133,14 @@ when defined(hotReload):
     newReloader(hotReloadCode, instantiationInfo(fullPaths = true).filename)
 
   proc startBuild(r: Reloader) =
+    let why = r.changed.join(", ") & " changed"
+    r.changed.setLen 0
     inc r.version
     r.building = r.buildDir / "lib" & r.code.splitFile.name & "_" & $r.version & libExt
     var args = @["c", "-d:hotReloadLibrary", "--nimcache:" & r.buildDir / "nimcache",
                  "--out:" & r.building, r.code]
     when defined(release): args.insert("-d:release", 1)
-    echo "hotreload: building " & r.code.extractFilename
+    echo "hotreload: building " & r.code.extractFilename & " (" & why & ")"
     # its output (errors) goes straight to this terminal
     r.build = startProcess("nim", r.code.parentDir, args, options = {poUsePath, poParentStreams})
 
@@ -194,7 +198,24 @@ when defined(hotReload):
     r.nextCheck = now + 0.25
     let current = r.sources()
     if current != r.mtimes:
+      # which ones, for the build's message: new or changed, and removed
+      var paths: seq[string]
+      for (path, time) in current:
+        if (path, time) notin r.mtimes: paths.add path
+      for (path, _) in r.mtimes:
+        var gone = true
+        for (other, _) in current:
+          if other == path: gone = false
+        if gone: paths.add path
+      for path in paths:
+        let name = path.relativePath(r.code.parentDir).replace('\\', '/')
+        if name notin r.changed: r.changed.add name
       r.mtimes = current
+      # a change starts a build once the sources have stopped changing (a save can touch
+      # a file twice, or several files), at the next check
+      r.settling = true
+    elif r.settling:
+      r.settling = false
       if r.build != nil: r.changedSince = true
       else: r.startBuild()
 
