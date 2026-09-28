@@ -8,8 +8,9 @@ reloading and no cost.
 ## Requirements
 
 - **Nim 2.2+**
-- **gcc** (Linux), or **MinGW's gcc** (Windows; choosenim installs it)
-- **Linux** or **Windows**. macOS isn't supported yet.
+- **gcc** (Linux), **MinGW's gcc** (Windows; choosenim installs it), or **clang** (macOS;
+  the Xcode command line tools)
+- **Linux**, **Windows** or **macOS**. Note that macOS is only tested by CI so far.
 
 ## Install
 
@@ -35,7 +36,7 @@ save, and the next greeting is the new one:
 Hello, world! (ticks: 12, since the last reload: 12)
 hotreload: building hello.nim
 hello: reloaded
-hotreload: reloaded hello.nim (libhello_1.so, or .dll on Windows)
+hotreload: reloaded hello.nim (libhello_1.so; .dll on Windows, .dylib on macOS)
 Howdy, world! (ticks: 20, since the last reload: 2)
 ```
 
@@ -183,8 +184,8 @@ library, runs the hooks, and points the main module's calls at the new code. As 
 swap only ever happens where the main module calls `update()`, never in the middle of a
 frame. If you change a file during a build, another build starts when that one is done.
 
-Each reload is a new library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Windows),
-and it replaces the last one completely.
+Each reload is a new library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Windows,
+`.dylib` on macOS), and it replaces the last one completely.
 
 The executable keeps the hot globals, so the new code gets the same ones. When a reload
 changes a hot global's type, whatever still fits is carried over field by field, by name.
@@ -196,7 +197,6 @@ Note that the callback still runs the code it came from, not the new code.
 
 ## Limits
 
-- macOS isn't supported yet.
 - On Windows, only MinGW's gcc works, not MSVC. The library links against the hot
   executable's import library, which MinGW's linker makes (`--out-implib`).
 - If you change the parameters or result of a proc the main module calls, the reload is

@@ -1,6 +1,5 @@
-# nimble test on each platform, for each push and pull request. Linux and Windows must
-# pass; macOS isn't supported yet, so its failures don't fail the run. A change to only
-# the docs, the license or editor settings doesn't run it.
+# nimble test on Linux, Windows and macOS, for each push and pull request. A change to
+# only the docs, the license or editor settings doesn't run it.
 name: test
 
 on:
@@ -16,7 +15,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
