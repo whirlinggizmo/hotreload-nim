@@ -18,15 +18,20 @@
 ## had: after a type change that's the old copy, so what it writes there is lost, not
 ## corrupting.
 
-import std/[hashes, macros]
+import std/[compilesettings, hashes, macros]
 when defined(hotReload) or defined(hotReloadLibrary):
-  import std/[compilesettings, os, strutils]
+  import std/[os, strutils]
 import ./[migrate, typesig]
 export migrate, typesig, hashes
 
 const hotReloadCode* {.strdefine.} = ""
   ## the reloaded module, which a hot build rebuilds as a library (hotReloadConfig sets
   ## it)
+
+proc inMainModule*(n: NimNode): bool {.compileTime.} =
+  ## whether `n` is in the main module, which is never hot reloaded, so none of the
+  ## pragmas mean anything there (a library's main module is the reloaded module)
+  not defined(hotReloadLibrary) and n.lineInfoObj.filename == querySetting(projectFull)
 
 proc moduleKey*(n: NimNode): string {.compileTime.} =
   ## where `n` is: its module's path from the reloaded module's directory, without the
@@ -110,6 +115,10 @@ else:
 macro hotGlobal*(def: untyped): untyped =
   ## `var name {.hot.}: T = first`: a global that survives a reload (reload.nim's `hot`
   ## passes a var section here; see the module's doc)
+  if inMainModule(def):
+    error("{.hot.} can't be used in the main module because the main module is never " &
+          "hot reloaded. The main module's globals keep their values anyway. Use {.hot.} " &
+          "in the reloaded modules.", def)
   when not (defined(hotReload) or defined(hotReloadLibrary)):
     # an ordinary global, but with its fields' defaults, as in a hot build (a bare
     # `var x: T` leaves them out)

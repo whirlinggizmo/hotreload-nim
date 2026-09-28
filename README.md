@@ -7,6 +7,16 @@ cost.
 
 Linux and Windows (with MinGW, the gcc that choosenim installs); not macOS yet.
 
+## Installing
+
+hotreload isn't in nimble's package list yet, so install it from GitHub:
+
+```
+nimble install https://github.com/whirlinggizmo/hotreload-nim
+```
+
+It needs Nim 2.2 or newer.
+
 ## A program that hot reloads
 
 The **main module** (`src/main.nim`) is compiled into the executable and is never
@@ -50,7 +60,8 @@ proc onBeforeHotReload() {.beforeHotReload.} = ...  # optional: before each relo
 proc onAfterHotReload() {.afterHotReload.} = ...    # optional: after each reload, on the new code
 ```
 
-Three pragmas, used in the reloaded modules:
+There are three pragmas, for the reloaded modules only. Using any of them in the main
+module is a compile error because the main module is never hot reloaded.
 
 - **`{.hot.}` on a global** keeps it across reloads: the executable holds it, and each
   new library is handed the same one. When a reload changes its type, what still fits is

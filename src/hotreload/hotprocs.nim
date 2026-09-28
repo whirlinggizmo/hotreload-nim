@@ -75,6 +75,10 @@ macro hotProc*(def: untyped): untyped =
     error("{.hot.}: a proc", def)
   if def[2].kind != nnkEmpty:
     error("{.hot.}: not a generic proc (a library can't export one)", def)
+  if inMainModule(def):
+    error("{.hot.} can't be used in the main module because the main module is never " &
+          "hot reloaded. Use {.hot.} on the procs in the reloaded modules that the main " &
+          "module calls.", def)
   when not (defined(hotReloadLibrary) or defined(hotReload)):
     result = def # an ordinary proc
   else:
@@ -157,6 +161,13 @@ var hooksSeen {.compileTime.}: Table[string, string]
 proc hookDef(def: NimNode; kind: HookKind; pragma: string): NimNode =
   if def.kind notin {nnkProcDef, nnkFuncDef}:
     error("{." & pragma & ".}: a proc", def)
+  # the main module would register its hooks once, as it starts, and the first reload
+  # forget them (forgetHooks) with the old code's: it has the reloader's callbacks instead
+  if inMainModule(def):
+    let callback = if kind == hookBefore: "beforeReload" else: "afterReload"
+    error("{." & pragma & ".} can't be used in the main module because the main module " &
+          "is never hot reloaded. Set `reloader." & callback & " = proc () = ...` in the " &
+          "main module instead.", def)
   if def.params.len > 1 or def.params[0].kind != nnkEmpty:
     error("{." & pragma & ".}: a proc with no parameters and no result", def)
   let key = def.lineInfoObj.filename & "|" & $kind

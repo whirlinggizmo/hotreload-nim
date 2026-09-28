@@ -1,8 +1,7 @@
 import std/unittest
 import hotreload
 import hotkeys/a/state as sa, hotkeys/b/state as sb
-
-var count {.hot.} = 3
+import ./hottop   # a hot global can't be in the main module
 
 type
   Node = ref object
@@ -26,7 +25,7 @@ template slot(key: string; T: typedesc): ptr T =
 suite "hot globals":
   test "keyed by module path and name":
     let keys = hotKeys()
-    check "thotglobals.count" in keys
+    check "hottop.count" in keys
     check "hotkeys/a/state.speed" in keys
     check "hotkeys/b/state.speed" in keys
     check sa.speed == 1 and sb.speed == 2.5 and count == 3
