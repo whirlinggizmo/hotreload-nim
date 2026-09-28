@@ -1,0 +1,29 @@
+# nimble test on each platform, for each push and pull request. Linux and Windows must
+# pass; macOS isn't supported yet, so its failures don't fail the run.
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Show the toolchain
+        run: |
+          nim --version
+          gcc --version
+      - name: nimble test
+        run: nimble test -y
