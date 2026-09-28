@@ -30,8 +30,12 @@ const hotReloadRoot {.strdefine.} = ""
 
 proc inMainModule*(n: NimNode): bool {.compileTime.} =
   ## whether `n` is in the main module, which is never hot reloaded, so none of the
-  ## pragmas mean anything there (a library's main module is the one the reloader writes)
-  not defined(hotReloadLibrary) and n.lineInfoObj.filename == querySetting(projectFull)
+  ## pragmas mean anything there (a library's main module is the one the reloader writes).
+  ## Only a build knows: an editor's `nim check` or nimsuggest of a reloaded module makes
+  ## that module the project, so for them nothing is the main module
+  not defined(hotReloadLibrary) and
+    querySetting(command) notin ["check", "idetools", ""] and
+    n.lineInfoObj.filename == querySetting(projectFull)
 
 const hotModules* = CacheSeq"hotreload.hotModules"
   ## the modules with hot globals, hot procs or reload hooks, as the executable's build
