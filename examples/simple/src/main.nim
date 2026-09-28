@@ -11,17 +11,35 @@ const AssetBase {.strdefine: "wgrAssetBase".} = "assets"
 
 let reloader = newReloader()
 
-initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
+proc init() = 
+  # initialize wgr
+  wgr.initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
            {WindowFlag.Msaa4x, WindowFlag.Resizable})
-setInit(proc () =
-  setAssetHost(AssetBase)
-  setAssetManifest(AssetManifestName)
-  onInit())
-setFrame(proc (dt, tickFraction: float) =
-  reloader.update()
-  onFrame(dt, tickFraction))
+  
+  # set wgr callbacks
+  wgr.setInit(proc () =
+    setAssetHost(AssetBase)
+    setAssetManifest(AssetManifestName)
+    # call our game's init
+    simple.onInit()
+  )
+  wgr.setFrame(proc (dt, tickFraction: float) =
+    # reloader needs to be pumped
+    reloader.update()
+    # call our games tick function
+    simple.onFrame(dt, tickFraction)
+  )
+
+proc shutdown(status:int=0) = 
+  # On the web wgr_run returns at once and the browser drives the frames, so don't exit()
+  # here: that would tear the program down.
+  when not defined(emscripten):
+    wgr.requestQuit()
+    quit status
+
+proc run():int = 
+  return wgr.run()
+
+init()
 let status = run()
-# On the web wgr_run returns at once and the browser drives the frames, so don't exit()
-# here: that would tear the program down.
-when not defined(emscripten):
-  quit status
+shutdown(status)
