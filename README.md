@@ -66,8 +66,11 @@ while running():
 
 The **reloaded modules** are everything else: the module your main module imports
 (`src/game.nim` here), and everything that module imports. Whenever one of their sources
-changes, the hot build rebuilds all of them as one shared library and swaps it in. Note
-that a module only the main module imports stays in the executable.
+changes, the hot build rebuilds all of them as one shared library and swaps it in.
+
+Note that if your main module imports another module that none of the reloaded modules
+import, that module is compiled into the executable with the main module, and changes to
+it require a restart too.
 
 hotreload's pragmas are for the reloaded modules only. Using them in the main module is a
 compile error because the main module is never hot reloaded.
