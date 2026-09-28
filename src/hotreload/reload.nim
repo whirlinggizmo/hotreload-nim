@@ -126,6 +126,10 @@ when defined(hotReload):
       let lib = dlopen(path.cstring, openFlags())
       (lib, if lib == nil: $dlerror() else: "")
 
+  const nimExe = getCurrentCompilerExe()
+    ## the nim that built this executable, which builds each library too: another nim
+    ## (another version first on PATH) could build code that doesn't fit this one
+
   const hotReloadBuildDir {.strdefine.} = ""
     ## where the library builds go (the libraries and their Nim cache), when the
     ## program's config names one: -d:hotReloadBuildDir=<dir>
@@ -204,8 +208,10 @@ when defined(hotReload):
     elif defined(macosx): args.add "--passL:-Wl,-undefined,dynamic_lookup"
     args.add r.root
     echo "hotreload: building (" & why & ")"
-    # its output (errors) goes straight to this terminal
-    r.build = startProcess("nim", r.program.parentDir, args,
+    # its output (errors) goes straight to this terminal. The nim on PATH only when the
+    # one that built this executable is gone (or was another machine's: a cross-compile)
+    let nim = if fileExists(nimExe): nimExe else: "nim"
+    r.build = startProcess(nim, r.program.parentDir, args,
                            options = {poUsePath, poParentStreams})
 
   proc swap(r: Reloader) =
