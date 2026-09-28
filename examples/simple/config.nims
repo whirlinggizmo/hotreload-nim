@@ -4,6 +4,8 @@
 #   nim hot       build and run with hot reload: edit src/simple.nim while it runs
 #   nim debug     build and run a debug build, no hot reload (breakpoints never go stale)
 #   nim release   build and run a release build
+#   nim build hot|debug|release|web|all
+#                 build without running (the editor's launch configurations use it)
 #   nim clean     remove out/ and build/
 #
 #   nim web       build it for the web: out/web/<variant>/simple.js and simple.wasm, and
@@ -92,19 +94,35 @@ when not declared(nimscript):
     echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open " &
          "http://localhost:8000/"
 
-  proc build(variant, flags: string) =
-    ## builds and runs src/main.nim: out/<os>/<variant>/simple, its Nim cache in build/
+  const variants = [("hot", "-d:hotReload -d:useMalloc --debugger:native"),
+                    ("debug", "--debugger:native"),
+                    ("release", "-d:release")]
+
+  proc build(variant: string; run = true) =
+    ## builds src/main.nim, and runs it: out/<os>/<variant>/simple, its Nim cache in build/
+    var flags = ""
+    for (name, f) in variants:
+      if name == variant: flags = f
     let variantDir = hostOS & "/" & variant
-    exec "nim c -r --hints:off " & flags & " --nimcache:" &
+    exec "nim c " & (if run: "-r " else: "") & "--hints:off " & flags & " --nimcache:" &
          quoteShell(thisDir / "build" / variantDir) & " --out:" &
          quoteShell(thisDir / "out" / variantDir / "simple") & " " & quoteShell(mainModule)
 
   task hot, "Build and run with hot reload: edit src/simple.nim while it runs":
-    build("hot", "-d:hotReload -d:useMalloc --debugger:native")
+    build("hot")
   task debug, "Build and run a debug build, no hot reload":
-    build("debug", "--debugger:native")
+    build("debug")
   task release, "Build and run a release build":
-    build("release", "-d:release")
+    build("release")
+  task build, "Build without running: nim build hot|debug|release|web|all":
+    let wanted = if paramCount() >= 2: paramStr(paramCount()) else: ""
+    case wanted
+    of "hot", "debug", "release": build(wanted, run = false)
+    of "web": buildWeb()
+    of "all":
+      for (name, _) in variants: build(name, run = false)
+      buildWeb()
+    else: quit "usage: nim build hot|debug|release|web|all", 1
   task clean, "Remove out/ and build/":
     rmDir thisDir / "out"
     rmDir thisDir / "build"
