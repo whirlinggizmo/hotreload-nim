@@ -16,7 +16,7 @@ jobs:
     continue-on-error: ${{ matrix.os == 'macos-latest' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: '2.2.x'
