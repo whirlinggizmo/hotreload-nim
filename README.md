@@ -24,12 +24,12 @@ module.)
 import hotreload
 import ./game
 
-let reloader = newReloader()
+let reloader = newReloader() # must be created in the main module
 
-game.onStart()
+game.init() # an example game's init proc, not hot reloaded (proc isn't tagged with the {.hot.} pragma)  
 while running():
-  reloader.update()   # pumps the file watcher, library builder, and reloader
-  game.onFrame()      # the newest onFrame, after a reload too
+  reloader.update()  # pumps the file watcher, builds the library (on a module change), and reloads it (on a successful build)
+  game.tick()        # an example game's tick proc, hot reloadable (proc tagged with {.hot} pragma). It will be updated on a change+build+reload 
 ```
 
 ```nim
@@ -39,10 +39,11 @@ import hotreload
 var score {.hot.} = 0            # kept across reloads
 var player {.hot.}: Player       # kept too, even when Player's fields change
 
-proc onStart*() = ...            # called once, before any reload: an ordinary proc
-proc onFrame*() {.hot.} = ...    # called on every frame: the newest version
+proc init*() = ...            # called once, before any reload: an ordinary proc
+proc tick*() {.hot.} = ...    # called on every frame: the newest version
 
-proc fixUp() {.afterHotReload.} = ...   # runs after each reload, on the new code
+proc onBeforeHotReload() {.beforeHotReload.} = ...   # runs before each reload, on the old code
+proc onAfterHotReload() {.afterHotReload.} = ...   # runs after each reload, on the new code
 ```
 
 Three pragmas, used in the reloaded modules:
@@ -61,10 +62,9 @@ Three pragmas, used in the reloaded modules:
   calls: before a reload on the old code, after one on the new. No parameters, and at
   most one of each per module.
 
-The names of the procs the main module calls (`onStart`, `onFrame`) are its own:
-hotreload calls none of them. It calls only the hooks, and `reloader.beforeReload` and
-`reloader.afterReload`, if the main module sets them, for its own business around a
-reload.
+The reloader will call procs tagged with `reloader.beforeHotReload` and
+`reloader.afterHotReload` (if provided) to allow the application to do any housekeeping before/after
+a reload.  Note that only one of each of these can exist per module.
 
 ## The build
 
