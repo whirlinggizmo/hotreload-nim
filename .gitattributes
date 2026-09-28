@@ -1,0 +1,2 @@
+# LF everywhere, Windows checkouts too: the smoke test edits its sources by exact text
+* text=auto eol=lf
