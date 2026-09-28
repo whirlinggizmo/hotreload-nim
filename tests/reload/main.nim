@@ -5,8 +5,9 @@
 import std/[os, times]
 import hotreload
 import ./code
+import ./parts/extra
 
-let reloader = newReloader("code.nim")
+let reloader = newReloader()
 reloader.beforeReload = proc () = echo "beforeReload count=", count()
 reloader.afterReload = proc () = echo "afterReload count=", count()
 
@@ -15,7 +16,7 @@ var last = ""
 while epochTime() - start < 300 and not fileExists("quit"):
   reloader.update()
   tick()
-  let now = report()
+  let now = report() & " " & extra()
   if now != last:
     echo "report: ", now
     last = now

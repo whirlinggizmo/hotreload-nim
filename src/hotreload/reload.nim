@@ -4,13 +4,14 @@
 ##
 ## The main module is compiled into the executable and never reloaded: a change to it
 ## requires a restart. It makes the reloader, which has to be made there, runs the loop,
-## and calls into the reloaded module, which it imports. That module, with everything it
-## imports, is built into one library, rebuilt whole with each reload. Built any other
-## way (debug, release, web), it's all one ordinary executable.
+## and calls into the reloaded modules. Those are the modules with something hot in them
+## ({.hot.} globals or procs, reload hooks), and everything they import: they're built
+## into one library, rebuilt whole with each reload. Built any other way (debug,
+## release, web), it's all one ordinary executable.
 ##
 ##   # main.nim: the main module, never reloaded
 ##   import hotreload, game
-##   let reloader = newReloader("game.nim")   # the reloaded module, from here
+##   let reloader = newReloader()
 ##   while running:
 ##     reloader.update()   # pumps the file watcher, library builder, and reloader
 ##     game.onFrame(dt)    # the newest onFrame
@@ -51,7 +52,7 @@ macro hot*(def: untyped): untyped =
   else: error("{.hot.}: a global (var) or a proc", def)
 
 when defined(hotReload):
-  import std/[compilesettings, dynlib, os, osproc, strutils, times]
+  import std/[compilesettings, dynlib, macrocache, os, osproc, strutils, times]
 
   when not defined(useMalloc):
     {.error: "hotreload: a hot build needs -d:useMalloc, because the executable and its " &
@@ -76,7 +77,10 @@ type Reloader* = ref object
   afterReload*: proc ()
     ## the main module's: just after, after the new code's {.afterHotReload.} hooks
   when defined(hotReload):
-    code: string              ## the reloaded module: what's built as the library
+    modules: seq[string]      ## the modules with something hot in them
+    dirs: seq[string]         ## where they are: watched, and below
+    root: string              ## the library's main module, which imports them
+    name: string              ## the executable's, for the libraries' names
     program: string           ## the main module: not watched
     buildDir: string
     lib: LibHandle
@@ -126,35 +130,64 @@ when defined(hotReload):
     ## program's config names one: -d:hotReloadBuildDir=<dir>
 
   proc sources(r: Reloader): seq[(string, Time)] =
-    ## the .nim files in the reloaded module's directory and below, but the main module,
-    ## and when each last changed
-    for path in walkDirRec(r.code.parentDir):
-      if path.splitFile.ext == ".nim" and path != r.program:
-        result.add (path, getLastModificationTime(path))
+    ## the .nim files in the reloaded modules' directories and below, but the main
+    ## module, and when each last changed
+    for dir in r.dirs:
+      for path in walkDirRec(dir):
+        if path.splitFile.ext == ".nim" and path != r.program:
+          result.add (path, getLastModificationTime(path))
 
-  proc newReloader*(code, program: string): Reloader =
-    ## watches the .nim files in `code`'s directory and below (but `program`, the main
-    ## module), and rebuilds `code`, the reloaded module, as a library when one changes.
-    ## `newReloader()` passes both
-    result = Reloader(code: code, program: program)
+  proc newReloader*(modules: openArray[string]; program: string): Reloader =
+    ## rebuilds `modules` (and what they import) as a library when a source in their
+    ## directories changes, but `program`, the main module. `newReloader()` passes both
+    result = Reloader(modules: @modules, program: program,
+                      name: getAppFilename().splitFile.name)
     result.buildDir =
       if hotReloadBuildDir.len > 0: hotReloadBuildDir
-      else: code.parentDir.parentDir / "build" / hostOS / "hot" / "library"
-    result.mtimes = result.sources()
+      else: program.parentDir.parentDir / "build" / hostOS / "hot" / "library"
     createDir(result.buildDir)
-    echo "hotreload: watching " & code.parentDir & " for changes to " & code.extractFilename
+    if modules.len == 0:
+      echo "hotreload: nothing to reload: no module has {.hot.} globals or procs, or " &
+           "reload hooks"
+      return
+    # each directory once, and none inside another
+    for m in modules:
+      if m.parentDir notin result.dirs: result.dirs.add m.parentDir
+    let dirs = result.dirs
+    result.dirs.setLen 0
+    for d in dirs:
+      var inside = false
+      for other in dirs:
+        if other != d and d.startsWith(other & DirSep): inside = true
+      if not inside: result.dirs.add d
+    # the library's main module: the reloaded modules, and through them what they import
+    result.root = result.buildDir / "hotreload_root.nim"
+    var imports = "# written by hotreload: the modules this program reloads\n"
+    for m in modules:
+      imports.add "import \"" & m.replace('\\', '/') & "\"\n"
+    writeFile(result.root, imports)
+    result.mtimes = result.sources()
+    var names: seq[string]
+    for m in modules: names.add m.relativePath(program.parentDir).replace('\\', '/')
+    echo "hotreload: watching for changes to " & names.join(", ") &
+         (if names.len == 1: " and what it imports" else: " and what they import")
 
-  template newReloader*(code: string): Reloader =
-    ## call once, in the main module: `code` is the reloaded module, a path from the main
-    ## module's directory ("game.nim")
-    const program = instantiationInfo(fullPaths = true).filename
-    newReloader(program.parentDir / code, program)
+  macro hotModuleList(): untyped =
+    ## the modules with something hot in them, which the build has seen by the time the
+    ## main module's own code is compiled (after its imports)
+    result = newTree(nnkBracket)
+    for m in hotModules: result.add m
+    if result.len == 0: result = newCall(bindSym"newSeq", ident"string")
+
+  template newReloader*(): Reloader =
+    ## call once, in the main module
+    newReloader(hotModuleList(), instantiationInfo(fullPaths = true).filename)
 
   proc startBuild(r: Reloader) =
     let why = r.changed.join(", ") & " changed"
     r.changed.setLen 0
     inc r.version
-    r.building = r.buildDir / "lib" & r.code.splitFile.name & "_" & $r.version & libExt
+    r.building = r.buildDir / "lib" & r.name & "_" & $r.version & libExt
     # all but the main module, loaded by this executable: with the executable's heap,
     # the same hotreload, keys from the same directory, and -d:release when it has it
     var args = @["c", "-d:hotReloadLibrary", "-d:useMalloc", "--app:lib", "--noMain:on",
@@ -167,10 +200,11 @@ when defined(hotReload):
     # macOS, found there when it loads
     when defined(windows): args.add "--passL:" & quoteShell(programLib)
     elif defined(macosx): args.add "--passL:-Wl,-undefined,dynamic_lookup"
-    args.add r.code
-    echo "hotreload: building " & r.code.extractFilename & " (" & why & ")"
+    args.add r.root
+    echo "hotreload: building (" & why & ")"
     # its output (errors) goes straight to this terminal
-    r.build = startProcess("nim", r.code.parentDir, args, options = {poUsePath, poParentStreams})
+    r.build = startProcess("nim", r.program.parentDir, args,
+                           options = {poUsePath, poParentStreams})
 
   proc swap(r: Reloader) =
     let (lib, error) = openLib(r.building)
@@ -205,7 +239,7 @@ when defined(hotReload):
     r.lib = lib
     runHooks(hookAfter)   # the new code's
     if r.afterReload != nil: r.afterReload()
-    echo "hotreload: reloaded " & r.code.extractFilename & " (" & r.building.extractFilename & ")"
+    echo "hotreload: reloaded (" & r.building.extractFilename & ")"
 
   proc update*(r: Reloader) =
     ## call every frame: checks the sources a few times a second, and swaps a finished
@@ -236,7 +270,7 @@ when defined(hotReload):
           if other == path: gone = false
         if gone: paths.add path
       for path in paths:
-        let name = path.relativePath(r.code.parentDir).replace('\\', '/')
+        let name = path.relativePath(r.program.parentDir).replace('\\', '/')
         if name notin r.changed: r.changed.add name
       r.mtimes = current
       # a change starts a build once the sources have stopped changing (a save can touch
@@ -248,7 +282,7 @@ when defined(hotReload):
       else: r.startBuild()
 
 else:
-  template newReloader*(code: string): Reloader =
+  template newReloader*(): Reloader =
     ## outside a hot build, nothing to watch: it's all one executable
     Reloader()
 

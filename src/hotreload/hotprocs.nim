@@ -79,6 +79,7 @@ macro hotProc*(def: untyped): untyped =
     error("{.hot.} can't be used in the main module because the main module is never " &
           "hot reloaded. Use {.hot.} on the procs in the reloaded modules that the main " &
           "module calls.", def)
+  recordModule(def)
   when not (defined(hotReloadLibrary) or defined(hotReload)):
     result = def # an ordinary proc
   else:
@@ -176,6 +177,7 @@ proc hookDef(def: NimNode; kind: HookKind; pragma: string): NimNode =
           ": one per module (call the rest from it)", def)
   let base = if def[0].kind == nnkPostfix: def[0][1] else: def[0]
   hooksSeen[key] = $base & " (line " & $def.lineInfoObj.line & ")"
+  recordModule(def)
   when defined(hotReload) or defined(hotReloadLibrary):
     def.addPragma ident"cdecl"
     let register = bindSym"registerHook"

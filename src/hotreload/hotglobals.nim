@@ -18,7 +18,7 @@
 ## had: after a type change that's the old copy, so what it writes there is lost, not
 ## corrupting.
 
-import std/[compilesettings, hashes, macros]
+import std/[compilesettings, hashes, macrocache, macros]
 when defined(hotReload) or defined(hotReloadLibrary):
   import std/[os, strutils]
 import ./[migrate, typesig]
@@ -30,8 +30,20 @@ const hotReloadRoot {.strdefine.} = ""
 
 proc inMainModule*(n: NimNode): bool {.compileTime.} =
   ## whether `n` is in the main module, which is never hot reloaded, so none of the
-  ## pragmas mean anything there (a library's main module is the reloaded module)
+  ## pragmas mean anything there (a library's main module is the one the reloader writes)
   not defined(hotReloadLibrary) and n.lineInfoObj.filename == querySetting(projectFull)
+
+const hotModules* = CacheSeq"hotreload.hotModules"
+  ## the modules with hot globals, hot procs or reload hooks, as the executable's build
+  ## finds them: the reloaded code is these and what they import (reload.nim)
+
+proc recordModule*(n: NimNode) {.compileTime.} =
+  ## `n`'s module, as one with something hot in it
+  when defined(hotReload):
+    let path = n.lineInfoObj.filename
+    for m in hotModules:
+      if m.strVal == path: return
+    hotModules.add newLit(path)
 
 proc moduleKey*(n: NimNode): string {.compileTime.} =
   ## where `n` is: its module's path from the main module's directory, without the
@@ -117,6 +129,7 @@ macro hotGlobal*(def: untyped): untyped =
     error("{.hot.} can't be used in the main module because the main module is never " &
           "hot reloaded. The main module's globals keep their values anyway. Use {.hot.} " &
           "in the reloaded modules.", def)
+  recordModule(def)
   when not (defined(hotReload) or defined(hotReloadLibrary)):
     # an ordinary global, but with its fields' defaults, as in a hot build (a bare
     # `var x: T` leaves them out)

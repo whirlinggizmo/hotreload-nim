@@ -85,7 +85,8 @@ proc edit(file, old, new: string) =
 suite "hot reload, while it runs":
   removeDir(appDir)
   createDir(appDir)
-  for f in ["main.nim", "code.nim"]:
+  for f in ["main.nim", "code.nim", "parts/extra.nim"]:
+    createDir(parentDir(appDir / f))
     copyFile(fixture / f, appDir / f)
   # a hot build needs nothing but -d:hotReload and -d:useMalloc; the path is where this
   # repo's hotreload is (an installed one needs none)
@@ -131,6 +132,10 @@ suite "hot reload, while it runs":
     let after = r.waitFor("afterReload count=")
     check after != "" and countIn(after) > 0
     check r.waitFor("report: v2 ring=true extra=new") != ""
+
+  test "a module nothing names is reloaded, because it has something hot in it":
+    edit("parts/extra.nim", "\"e1\"", "\"e2\"")
+    check r.waitFor(" e2") != ""
 
   test "a hot proc's signature changes: refused, and the last code runs on":
     edit("code.nim", "proc report*(): string", "proc report*(verbose = false): string")

@@ -58,7 +58,7 @@ calls `reloader.update()` in its loop:
 import hotreload
 import ./game
 
-let reloader = newReloader("game.nim")   # must be created in the main module
+let reloader = newReloader()   # must be created in the main module
 
 game.init()
 while running():
@@ -66,15 +66,16 @@ while running():
   game.tick()
 ```
 
-`newReloader` takes the reloaded module's path, from the main module's directory.
+The **reloaded modules** are the modules with something hot in them (a `{.hot.}` global
+or proc, or a reload hook), like `src/game.nim` here, and everything those modules
+import. You don't have to tell the reloader which they are, because the pragmas do.
+Whenever one of their sources changes, the hot build rebuilds all of them as one shared
+library and swaps it in.
 
-The **reloaded modules** are everything else: the module your main module imports
-(`src/game.nim` here), and everything that module imports. Whenever one of their sources
-changes, the hot build rebuilds all of them as one shared library and swaps it in.
-
-Note that if your main module imports another module that none of the reloaded modules
-import, that module is compiled into the executable with the main module, and changes to
-it require a restart too.
+Note that a module with nothing hot in it, which only your main module imports, is
+compiled into the executable with the main module, and changes to it require a restart
+too. That's true of a module your main module calls, as well: give the procs it calls
+`{.hot.}` (see below), and it's reloaded.
 
 hotreload's pragmas are for the reloaded modules only. Using them in the main module is a
 compile error because the main module is never hot reloaded.
@@ -167,14 +168,15 @@ task hot, "Build and run with hot reload":
 
 `--nimcache` gives the hot build its own Nim cache, so it doesn't share one with your
 debug build or with another program's `main.nim`. The libraries go to
-`build/<platform>/hot/library/` in the directory above the reloaded module's (your
-project, when it's `src/game.nim`). To put them
-somewhere else, add `-d:hotReloadBuildDir=<dir>`.
+`build/<platform>/hot/library/` in the directory above the main module's (your project,
+when it's `src/main.nim`). To put them somewhere else, add `-d:hotReloadBuildDir=<dir>`.
 
-Each library is built with `nim c` from the reloaded module's directory, so it reads the
-same `config.nims` files your program does. Note that defines you pass only on the
-command line don't reach the libraries. As such, put the defines both need in your
-`config.nims`. A library build has `-d:hotReloadLibrary`, if you need to tell it apart:
+Each library is built with `nim c` from a small module the reloader writes there, which
+imports the reloaded modules. As such, a library build reads the `config.nims` files in
+your project's directory and above it, like your program's build does, but not one next
+to your main module in `src/`. Put your `config.nims` in your project's directory. Note
+also that defines you pass only on the command line don't reach the libraries. Put the
+defines both builds need in your `config.nims`. A library build has `-d:hotReloadLibrary`, if you need to tell it apart:
 
 ```nim
 # config.nims
@@ -185,7 +187,7 @@ when defined(hotReloadLibrary):
 ## How it works
 
 Everything happens in `reloader.update()`; there's no watcher thread. A few times a
-second, `update()` checks the sources in the reloaded module's directory and below it
+second, `update()` checks the sources in the reloaded modules' directories and below them
 (except the main module) for changes. Once they've changed and then stopped changing, it
 starts a build of the reloaded modules as one shared library (`-d:hotReloadLibrary`) in
 the background, and returns. The old code keeps running in the meantime, and any
