@@ -1,5 +1,5 @@
-# wgrender's simple example, hot reloaded: src/main.nim is the program, src/simple.nim the
-# code it reloads. hotreload's tasks (src/hotreload/tasks.nims):
+# wgrender's simple example, hot reloaded: src/main.nim is the main module, and
+# src/simple.nim is reloaded. hotreload's tasks (src/hotreload/tasks.nims):
 #
 #   nim build hot|debug|release|web|all
 #   nim hot       build and run with hot reload: edit src/simple.nim while it runs
@@ -13,8 +13,11 @@
 #                 and wgrender-nim's page
 #   nim serve     serve the web build on http://localhost:8000 (assets at /assets)
 #
-# wgrender-nim: WGRENDER_NIM, else ~/projects/github/whirlinggizmo/wgrender-nim; the web
-# build uses its page and tools. Web options, as wgrender-nim reads them:
+# wgrender: the installed package (nimble install https://github.com/whirlinggizmo/wgrender-nim),
+# or a wgrender-nim checkout at WGRENDER_NIM, when you're working on wgrender too. The web
+# build needs a checkout, for its page and tools, which the package doesn't carry. The
+# assets are the examples' own, in examples/assets/ (copies of wgrender's; licenses in
+# CREDITS.md). Web options, as wgrender-nim reads them:
 #   BACKEND=webgl2|webgpu   WEB_THREADS=1|0   WEB_DEBUG=0|1
 
 # The stock nimlangserver checks a .nims with --import:system/nimscript, which `nim check`
@@ -23,18 +26,37 @@
 # sees it, nor does a server that leaves that import out, which checks this file for real.
 when not declared(nimscript):
   # what NimScript doesn't have already (it has getEnv, fileExists, findExe, mkDir, ...)
-  from std/os import `/`, parentDir, getHomeDir, quoteShell, relativePath
+  from std/os import `/`, parentDir, quoteShell, relativePath
+  from std/strutils import splitLines, strip
   import "../../src/hotreload/tasks.nims"
 
   const thisDir = currentSourcePath().parentDir()
   let target = BuildTarget(dir: thisDir, name: "simple")
   hotReloadConfig(target)
 
-  let wgrNim = getEnv("WGRENDER_NIM", getHomeDir() / "projects/github/whirlinggizmo/wgrender-nim")
-  let wgrenderDir =
-    if getEnv("WGRENDER_DIR").len > 0: getEnv("WGRENDER_DIR")
-    elif fileExists(wgrNim / "../wgrender-c/include/wgr.h"): wgrNim / "../wgrender-c"
-    else: wgrNim / "project/lib/wgrender-c"
+  proc installedWgrender(): string =
+    ## where nimble installed wgrender, or "" (its last line: nimble may warn first)
+    let (output, code) = gorgeEx("nimble path wgrender")
+    if code == 0: output.strip.splitLines[^1] else: ""
+
+  let wgrNim =
+    if getEnv("WGRENDER_NIM").len > 0: getEnv("WGRENDER_NIM")
+    else: installedWgrender()
+  if wgrNim.len == 0 and getCommand() in ["c", "compile"]:
+    quit "simple needs wgrender: nimble install https://github.com/whirlinggizmo/wgrender-nim " &
+         "(or WGRENDER_NIM=<a wgrender-nim checkout>)"
+  # the binding: a checkout's src/, or the package itself
+  let wgrSrc = if dirExists(wgrNim / "src"): wgrNim / "src" else: wgrNim
+  let wgrNimCheckout = fileExists(wgrNim / "tools/webdeploy.py")
+
+  proc needCheckout() =
+    if not wgrNimCheckout:
+      quit "simple's web build needs a wgrender-nim checkout, for its page and tools: " &
+           "WGRENDER_NIM=<path>"
+
+  # the examples' assets: copies of wgrender's example assets, with their licenses
+  # (examples/assets/CREDITS.md)
+  const assetsDir = thisDir.parentDir / "assets"
 
   proc webVariant(): string =
     ## web/<variant>, from the web settings (threaded unless WEB_THREADS=0)
@@ -42,7 +64,7 @@ when not declared(nimscript):
     if getEnv("WEB_THREADS", "1") == "0": result.add "-nothreads"
     if getEnv("WEB_DEBUG", "0") == "1": result.add "-debug"
 
-  switch("path", wgrNim / "src")
+  switch("path", wgrSrc)
 
   if defined(emscripten):
     # one program, simple.nim compiled in: there is no hot reload on the web
@@ -60,15 +82,16 @@ when not declared(nimscript):
       switch("define", "release")
       switch("clang.options.linker", "")
   elif defined(hotReloadLibrary):
-    # wgrender comes from the program that loads the code
+    # wgrender comes from the executable that loads the library
     switch("define", "wgrDeclarationsOnly")
   else:
-    switch("define", "wgrAssetBase=" & wgrenderDir / "examples/assets")
+    switch("define", "wgrAssetBase=" & assetsDir)
 
   proc python(): string =
     if findExe("python3").len > 0: "python3" else: "python"
 
   proc buildWeb() =
+    needCheckout()
     echo "Building simple (web)..."
     let site = thisDir / "out" / webVariant()
     mkDir(site)
@@ -79,12 +102,16 @@ when not declared(nimscript):
          " " & quoteShell(wgrNim / "web/index.html")
     echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open http://localhost:8000/"
 
-  hotReloadTasks(target, [("web", buildWeb)])
+  # the web build is part of `nim build all` when there's a checkout to build it with
+  var extraBuilds: seq[ExtraBuild]
+  if wgrNimCheckout: extraBuilds.add ("web", buildWeb)
+  hotReloadTasks(target, extraBuilds)
 
   task web, "Build for the web, simple.nim compiled in":
     buildWeb()
 
   task serve, "Serve the web build on http://localhost:8000":
+    needCheckout()
     exec python() & " " & quoteShell(wgrNim / "tools/serve.py") & " 8000 " &
          quoteShell(thisDir / "out" / webVariant()) & " --assets " &
-         quoteShell(wgrenderDir / "examples/assets") & " --gzip"
+         quoteShell(assetsDir) & " --gzip"
