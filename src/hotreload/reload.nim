@@ -52,7 +52,7 @@ macro hot*(def: untyped): untyped =
   else: error("{.hot.}: a global (var) or a proc", def)
 
 when defined(hotReload):
-  import std/[compilesettings, dynlib, macrocache, os, osproc, strutils, times]
+  import std/[dynlib, macrocache, os, osproc, strutils, times]
 
   when not defined(useMalloc):
     {.error: "hotreload: a hot build needs -d:useMalloc, because the executable and its " &
@@ -63,6 +63,7 @@ when defined(hotReload):
   # library resolves against: on Windows, a DLL links against the executable's import
   # library, written to its Nim cache
   when defined(windows):
+    import std/compilesettings
     # (joined with /, which MinGW takes: `/` would make a cross-compile's path Windows')
     const programLib = querySetting(nimcacheDir) & "/lib" & querySetting(projectName) & ".a"
     {.passL: "-Wl,--export-all-symbols -Wl,--out-implib," & quoteShell(programLib).}
@@ -162,7 +163,8 @@ when defined(hotReload):
       if not inside: result.dirs.add d
     # the library's main module: the reloaded modules, and through them what they import
     result.root = result.buildDir / "hotreload_root.nim"
-    var imports = "# written by hotreload: the modules this program reloads\n"
+    var imports = "# written by hotreload: the modules this program reloads\n" &
+                  "{.warning[UnusedImport]: off.}\n"
     for m in modules:
       imports.add "import \"" & m.replace('\\', '/') & "\"\n"
     writeFile(result.root, imports)
