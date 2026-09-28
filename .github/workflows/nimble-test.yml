@@ -1,0 +1,35 @@
+# nimble test on one platform: the Linux, Windows and macOS workflows each run it, so
+# each has a badge of its own.
+name: nimble test
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      # Homebrew has a built Nim for macOS; setup-nim-action builds it from source there
+      - name: Install Nim (Homebrew)
+        if: runner.os == 'macOS'
+        run: brew install nim
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+      - name: Install Nim
+        if: runner.os != 'macOS'
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: '2.2.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Show the toolchain
+        run: |
+          nim --version
+          gcc --version
+      - name: nimble test
+        run: nimble test -y

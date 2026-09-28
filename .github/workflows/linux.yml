@@ -1,0 +1,15 @@
+# nimble test on Linux, for each push and pull request (nimble-test.yml). A change to only
+# the docs, the license or editor settings doesn't run it.
+name: Linux
+
+on:
+  push:
+    paths-ignore: ['**.md', 'LICENSE', '.vscode/**']
+  pull_request:
+    paths-ignore: ['**.md', 'LICENSE', '.vscode/**']
+
+jobs:
+  test:
+    uses: ./.github/workflows/nimble-test.yml
+    with:
+      os: ubuntu-latest

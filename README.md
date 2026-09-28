@@ -1,5 +1,7 @@
 # hotreload-nim
 
+[![Linux](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/linux.yml/badge.svg)](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/linux.yml) [![Windows](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/windows.yml/badge.svg)](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/windows.yml) [![macOS](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/macos.yml/badge.svg)](https://github.com/whirlinggizmo/hotreload-nim/actions/workflows/macos.yml)
+
 Hot reload for Nim programs. While your program runs, you can edit its code and save, and
 the code is rebuilt in the background and swapped in without restarting and without
 losing its state. Debug, release and web builds compile the same code in, with no
