@@ -29,8 +29,15 @@ that lists its dependencies in a `.nimble` file requires it the same way:
 requires "https://github.com/whirlinggizmo/hotreload-nim >= 0.0.1"
 ```
 
-Note that nimble only fetches a newer hotreload when a newer tagged version exists, so a
-requirement without a version keeps whichever copy nimble fetched first.
+Note that nimble keeps the copy of hotreload it fetched first, even after a newer version
+is tagged. A newer version is fetched by deleting nimble's cached copies and the
+installed one, then installing again:
+
+```bash
+rm -rf ~/.nimble/pkgcache/githubcom_whirlinggizmohotreloadnim*
+rm -rf nimbledeps/pkgs2/hotreload-*   # or ~/.nimble/pkgs2/hotreload-*, for a global install
+nimble install -y --depsOnly
+```
 
 ## An application that hot reloads
 
