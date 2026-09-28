@@ -77,19 +77,26 @@ when defined(hotReload):
       let lib = loadLib(path)
       (lib, if lib == nil: osErrorMsg(osLastError()) else: "")
   else:
-    const
-      libExt = ".so"
-      RTLD_NOW = 2.cint
+    var RTLD_NOW {.importc, header: "<dlfcn.h>".}: cint
+    when defined(macosx):
+      const libExt = ".dylib"
+      # a library uses its own symbols before the executable's anyway (macOS's two-level
+      # namespace)
+      var RTLD_LOCAL {.importc, header: "<dlfcn.h>".}: cint
+      template openFlags(): cint = RTLD_NOW or RTLD_LOCAL
+    else:
+      const libExt = ".so"
       # the library's own symbols before the executable's: its Nim runtime, not the
       # executable's
-      RTLD_DEEPBIND = 8.cint
+      var RTLD_DEEPBIND {.importc, header: "<dlfcn.h>".}: cint
+      template openFlags(): cint = RTLD_NOW or RTLD_DEEPBIND
 
     proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
     proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
 
     proc openLib(path: string): (LibHandle, string) =
       ## the library, or why not
-      let lib = dlopen(path.cstring, RTLD_NOW or RTLD_DEEPBIND)
+      let lib = dlopen(path.cstring, openFlags())
       (lib, if lib == nil: $dlerror() else: "")
 
   const hotReloadBuildDir {.strdefine.} = ""

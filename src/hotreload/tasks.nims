@@ -106,6 +106,9 @@ when not declared(nimscript):
       switch("noMain", "on")
       if defined(windows):
         switch("passL", quoteShell(programLib))
+      elif defined(macosx):
+        # what it calls in the executable is found there when it loads
+        switch("passL", "-Wl,-undefined,dynamic_lookup")
     elif defined(hotReload):
       # export the executable's own symbols (an engine it links) for the library to
       # resolve against
