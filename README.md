@@ -26,7 +26,7 @@ hotreload isn't in nimble's package list yet, so it is installed from GitHub. A 
 that lists its dependencies in a `.nimble` file requires it the same way:
 
 ```nim
-requires "https://github.com/whirlinggizmo/hotreload-nim >= 0.0.1"
+requires "https://github.com/whirlinggizmo/hotreload-nim >= 0.1.0"
 ```
 
 Note that nimble keeps the copy of hotreload it fetched first, even after a newer version
