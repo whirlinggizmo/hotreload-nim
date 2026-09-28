@@ -87,17 +87,12 @@ suite "hot reload, while it runs":
   createDir(appDir)
   for f in ["main.nim", "code.nim"]:
     copyFile(fixture / f, appDir / f)
-  # its path with /: a Windows one's \ would be an escape
-  writeFile(appDir / "config.nims", """
-from std/os import parentDir
-import "$1"
-let target = BuildTarget(dir: currentSourcePath().parentDir, name: "app",
-                         main: "main.nim", code: "code.nim")
-hotReloadConfig(target)
-""" % (repoDir / "src/hotreload/tasks.nims").replace('\\', '/'))
-
-  let (output, code) = execCmdEx("nim c -d:hotReload --out:" & quoteShell(appDir / "app") &
-                                 " main.nim", workingDir = appDir)
+  # a hot build needs nothing but -d:hotReload and -d:useMalloc; the path is where this
+  # repo's hotreload is (an installed one needs none)
+  let (output, code) = execCmdEx("nim c -d:hotReload -d:useMalloc --path:" &
+                                 quoteShell(repoDir / "src") & " --nimcache:" &
+                                 quoteShell(appDir / "nimcache") & " --out:" &
+                                 quoteShell(appDir / "app") & " main.nim", workingDir = appDir)
   if code != 0: echo output
   require code == 0
 

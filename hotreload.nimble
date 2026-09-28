@@ -5,7 +5,10 @@ author        = "Rob Knopf"
 description   = "Hot reload for Nim programs: rebuild the code while it runs, keep its state"
 license       = "MIT"
 srcDir        = "src"
-installExt    = @["nim", "nims"]
+installExt    = @["nim"]
+# A plain `nimble install` copies only srcDir, but a project's own dependencies
+# (nimbledeps/) get every .nim file in the repo, so say it outright
+skipDirs      = @["examples"]
 
 # Dependencies
 

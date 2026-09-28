@@ -10,7 +10,7 @@
 ##
 ##   # main.nim: the main module, never reloaded
 ##   import hotreload, game
-##   let reloader = newReloader()
+##   let reloader = newReloader("game.nim")   # the reloaded module, from here
 ##   while running:
 ##     reloader.update()   # pumps the file watcher, library builder, and reloader
 ##     game.onFrame(dt)    # the newest onFrame
@@ -20,6 +20,11 @@
 ##   var score {.hot.} = 0                    # kept across reloads (hotglobals.nim)
 ##   proc onFrame*(dt: float) {.hot.} = ...   # the main module's calls follow reloads
 ##   proc fixUp() {.afterHotReload.} = ...    # run after each reload (hotprocs.nim)
+##
+## A hot build is `nim c -d:hotReload -d:useMalloc main.nim`: nothing else to configure.
+## The executable exports its symbols for the library (the pragmas below), and the
+## reloader builds each library with what it needs on its own command line. Defines both
+## builds need go in a config.nims, which both read.
 ##
 ## A reload that changed the signature of a hot proc (its parameters or result) is
 ## refused: the main module would call it the old way. Restart to run it.
@@ -46,7 +51,22 @@ macro hot*(def: untyped): untyped =
   else: error("{.hot.}: a global (var) or a proc", def)
 
 when defined(hotReload):
-  import std/[dynlib, os, osproc, strutils, times]
+  import std/[compilesettings, dynlib, os, osproc, strutils, times]
+
+  when not defined(useMalloc):
+    {.error: "hotreload: a hot build needs -d:useMalloc, because the executable and its " &
+             "library share one heap. Add it to the nim command line, or to config.nims: " &
+             "switch(\"define\", \"useMalloc\")".}
+
+  # The executable exports its own symbols (hotreload's, an engine it links), which each
+  # library resolves against: on Windows, a DLL links against the executable's import
+  # library, written to its Nim cache
+  when defined(windows):
+    # (joined with /, which MinGW takes: `/` would make a cross-compile's path Windows')
+    const programLib = querySetting(nimcacheDir) & "/lib" & querySetting(projectName) & ".a"
+    {.passL: "-Wl,--export-all-symbols -Wl,--out-implib," & quoteShell(programLib).}
+  else:
+    {.passL: "-rdynamic".}
 
 type Reloader* = ref object
   ## the main module's side of hot reload: `update` it every frame (or loop)
@@ -119,27 +139,35 @@ when defined(hotReload):
     result = Reloader(code: code, program: program)
     result.buildDir =
       if hotReloadBuildDir.len > 0: hotReloadBuildDir
-      else: code.parentDir.parentDir / "build/library"
+      else: code.parentDir.parentDir / "build" / hostOS / "hot" / "library"
     result.mtimes = result.sources()
     createDir(result.buildDir)
     echo "hotreload: watching " & code.parentDir & " for changes to " & code.extractFilename
 
-  template newReloader*(): Reloader =
-    ## call once, in the main module: the reloaded module is the one hotReloadConfig
-    ## names (-d:hotReloadCode=<module>)
-    when hotReloadCode.len == 0:
-      {.error: "hotreload: which module is reloaded? -d:hotReloadCode=<module> " &
-               "(hotReloadConfig sets it)".}
-    newReloader(hotReloadCode, instantiationInfo(fullPaths = true).filename)
+  template newReloader*(code: string): Reloader =
+    ## call once, in the main module: `code` is the reloaded module, a path from the main
+    ## module's directory ("game.nim")
+    const program = instantiationInfo(fullPaths = true).filename
+    newReloader(program.parentDir / code, program)
 
   proc startBuild(r: Reloader) =
     let why = r.changed.join(", ") & " changed"
     r.changed.setLen 0
     inc r.version
     r.building = r.buildDir / "lib" & r.code.splitFile.name & "_" & $r.version & libExt
-    var args = @["c", "-d:hotReloadLibrary", "--nimcache:" & r.buildDir / "nimcache",
-                 "--out:" & r.building, r.code]
-    when defined(release): args.insert("-d:release", 1)
+    # all but the main module, loaded by this executable: with the executable's heap,
+    # the same hotreload, keys from the same directory, and -d:release when it has it
+    var args = @["c", "-d:hotReloadLibrary", "-d:useMalloc", "--app:lib", "--noMain:on",
+                 "--hints:off", "--path:" & currentSourcePath().parentDir.parentDir,
+                 "-d:hotReloadRoot=" & r.program.parentDir,
+                 "--nimcache:" & r.buildDir / "nimcache", "--out:" & r.building]
+    when defined(release): args.add "-d:release"
+    else: args.add "--debugger:native"
+    # what it calls in the executable: on Windows, linked against its import library; on
+    # macOS, found there when it loads
+    when defined(windows): args.add "--passL:" & quoteShell(programLib)
+    elif defined(macosx): args.add "--passL:-Wl,-undefined,dynamic_lookup"
+    args.add r.code
     echo "hotreload: building " & r.code.extractFilename & " (" & why & ")"
     # its output (errors) goes straight to this terminal
     r.build = startProcess("nim", r.code.parentDir, args, options = {poUsePath, poParentStreams})
@@ -220,7 +248,7 @@ when defined(hotReload):
       else: r.startBuild()
 
 else:
-  template newReloader*(): Reloader =
+  template newReloader*(code: string): Reloader =
     ## outside a hot build, nothing to watch: it's all one executable
     Reloader()
 

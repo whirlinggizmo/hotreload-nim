@@ -6,7 +6,7 @@ import std/[os, times]
 import hotreload
 import ./code
 
-let reloader = newReloader()
+let reloader = newReloader("code.nim")
 reloader.beforeReload = proc () = echo "beforeReload count=", count()
 reloader.afterReload = proc () = echo "afterReload count=", count()
 

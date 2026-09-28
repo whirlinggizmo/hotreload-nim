@@ -1,6 +1,6 @@
 ## Globals that survive a reload: `var enemies {.hot.}: seq[Enemy]`, or with a first
 ## value, `var speed {.hot.} = 1.0`. In a hot build the executable keeps each one, by its
-## module (its path from the reloaded module's directory: `player/state.speed`) and name,
+## module (its path from the main module's directory: `player/state.speed`) and name,
 ## and every library that loads is handed the one that's there: its first value is used
 ## once, when it's first made. When a reload changes its type, what still fits is carried
 ## over (migrate.nim) and the rest starts from the first value. Everywhere else (debug,
@@ -24,9 +24,9 @@ when defined(hotReload) or defined(hotReloadLibrary):
 import ./[migrate, typesig]
 export migrate, typesig, hashes
 
-const hotReloadCode* {.strdefine.} = ""
-  ## the reloaded module, which a hot build rebuilds as a library (hotReloadConfig sets
-  ## it)
+const hotReloadRoot {.strdefine.} = ""
+  ## the main module's directory, which the reloader passes to each library build: hot
+  ## globals' and procs' keys are paths from it
 
 proc inMainModule*(n: NimNode): bool {.compileTime.} =
   ## whether `n` is in the main module, which is never hot reloaded, so none of the
@@ -34,14 +34,12 @@ proc inMainModule*(n: NimNode): bool {.compileTime.} =
   not defined(hotReloadLibrary) and n.lineInfoObj.filename == querySetting(projectFull)
 
 proc moduleKey*(n: NimNode): string {.compileTime.} =
-  ## where `n` is: its module's path from the reloaded module's directory, without the
-  ## extension (`player/state`). The executable and each library are built with the same
-  ## reloaded module, so each makes the same key (without one, a test's: its main
-  ## module's directory); by path, so two modules with one name in different directories
-  ## don't share
+  ## where `n` is: its module's path from the main module's directory, without the
+  ## extension (`player/state`). The executable is built from the main module, and each
+  ## library is told its directory (-d:hotReloadRoot), so each makes the same key; by
+  ## path, so two modules with one name in different directories don't share
   when defined(hotReload) or defined(hotReloadLibrary):
-    let root = if hotReloadCode.len > 0: hotReloadCode.parentDir
-               else: querySetting(projectPath)
+    let root = if hotReloadRoot.len > 0: hotReloadRoot else: querySetting(projectPath)
     n.lineInfoObj.filename.changeFileExt("").relativePath(root).replace('\\', '/')
   else:
     ""

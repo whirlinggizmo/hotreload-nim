@@ -9,7 +9,7 @@ import ./simple
 const AssetBase {.strdefine: "wgrAssetBase".} = "assets"
   ## beside the page on the web; on the desktop the config names it
 
-let reloader = newReloader()
+let reloader = newReloader("simple.nim")
 
 initValues(1024, 1280, "simple (wgrender, Nim, hot reload)",
            {WindowFlag.Msaa4x, WindowFlag.Resizable})

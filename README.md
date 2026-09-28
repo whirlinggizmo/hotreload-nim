@@ -58,13 +58,15 @@ calls `reloader.update()` in its loop:
 import hotreload
 import ./game
 
-let reloader = newReloader()   # must be created in the main module
+let reloader = newReloader("game.nim")   # must be created in the main module
 
 game.init()
 while running():
   reloader.update()   # pumps the file watcher, library builder, and reloader
   game.tick()
 ```
+
+`newReloader` takes the reloaded module's path, from the main module's directory.
 
 The **reloaded modules** are everything else: the module your main module imports
 (`src/game.nim` here), and everything that module imports. Whenever one of their sources
@@ -136,44 +138,49 @@ reloader.afterReload = proc () = echo "reloaded"
 
 ## Building
 
-hotreload's `tasks.nims` sets up the builds and adds build tasks, from your program's
-`config.nims`. A `config.nims` can't import an installed nimble package by name, because
-it's read before nimble's paths are added. As such, it asks nimble where hotreload is:
+A hot build is an ordinary `nim c` with two defines:
+
+```bash
+nim c -r -d:hotReload -d:useMalloc src/main.nim
+```
+
+`-d:hotReload` turns hot reloading on. `-d:useMalloc` is needed because the executable
+and its libraries share one heap. If you leave it out, hotreload stops the build and says
+so. hotreload sets everything else itself: the executable's link flags, and the whole
+command line of each library build.
+
+Without `-d:hotReload`, it's one ordinary executable with no reloading. That's your debug
+and release builds, unchanged:
+
+```bash
+nim c -r src/main.nim             # debug: breakpoints don't go stale
+nim c -r -d:release src/main.nim  # release
+```
+
+Want `nim hot` to do it? Add a task to your `config.nims`:
 
 ```nim
 # config.nims
-import std/[macros, strutils]
-macro importHotreloadTasks(): untyped =
-  let dir = staticExec("nimble path hotreload").strip
-  newTree(nnkImportStmt, newLit(dir & "/hotreload/tasks.nims"))
-importHotreloadTasks()
-
-let target = BuildTarget(dir: thisDir(), name: "game")
-hotReloadConfig(target)   # the build switches; your own switches go after this
-hotReloadTasks(target)    # the build tasks
+task hot, "Build and run with hot reload":
+  exec "nim c -r -d:hotReload -d:useMalloc --nimcache:build/hot --out:out/hot/game src/main.nim"
 ```
 
-If you have a copy of hotreload somewhere else, `import "<path>/src/hotreload/tasks.nims"`
-does the same thing.
+`--nimcache` gives the hot build its own Nim cache, so it doesn't share one with your
+debug build or with another program's `main.nim`. The libraries go to
+`build/<platform>/hot/library/` in the directory above the reloaded module's (your
+project, when it's `src/game.nim`). To put them
+somewhere else, add `-d:hotReloadBuildDir=<dir>`.
 
-`BuildTarget` describes your program. By default, its main module is `src/main.nim` and
-its reloaded module is `src/<name>.nim`. You can set `main` and `code` (paths from `dir`)
-to use others.
+Each library is built with `nim c` from the reloaded module's directory, so it reads the
+same `config.nims` files your program does. Note that defines you pass only on the
+command line don't reach the libraries. As such, put the defines both need in your
+`config.nims`. A library build has `-d:hotReloadLibrary`, if you need to tell it apart:
 
-That gives you three builds:
-
-| Build     | What it is                                                               |
-|-----------|--------------------------------------------------------------------------|
-| `hot`     | a debug build that rebuilds the library while it runs, and reloads it    |
-| `debug`   | one executable, no library: no reloading, and breakpoints don't go stale |
-| `release` | one executable, no library, `-d:release`                                 |
-
-- `nim hot`, `nim debug` and `nim release` build one and run it.
-- `nim build hot|debug|release|all` only builds.
-- `nim clean` removes everything the builds made.
-
-Each build goes to `out/<platform>/<build>/<name>`, and its Nim cache to
-`build/<platform>/<build>/`. The hot build's libraries go to `build/<platform>/hot/library/`.
+```nim
+# config.nims
+when defined(hotReloadLibrary):
+  switch("define", "engineDeclarationsOnly")   # the engine comes from the executable
+```
 
 ## How it works
 
@@ -224,7 +231,6 @@ src/hotreload/
   hotprocs.nim           hot procs, and the {.beforeHotReload.} / {.afterHotReload.} hooks
   migrate.nim            carrying a value from one build's type to another's
   typesig.nim            a type's shape, to tell when it changed
-  tasks.nims             the build variants and their tasks, for a program's config.nims
 tests/                   `nimble test`: the modules' tests, and treload.nim, a smoke test
                          that builds tests/reload/ hot, runs it and edits it while it runs
 examples/hello/          a console program: src/main.nim, its main module, and

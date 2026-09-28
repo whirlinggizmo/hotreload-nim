@@ -7,7 +7,7 @@ import std/os
 import hotreload
 import ./hello
 
-let reloader = newReloader()
+let reloader = newReloader("hello.nim")
 
 onStart()
 while true:

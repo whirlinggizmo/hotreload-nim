@@ -1,13 +1,10 @@
 # wgrender's simple example, hot reloaded: src/main.nim is the main module, and
-# src/simple.nim is reloaded. hotreload's tasks (src/hotreload/tasks.nims):
+# src/simple.nim is reloaded.
 #
-#   nim build hot|debug|release|web|all
 #   nim hot       build and run with hot reload: edit src/simple.nim while it runs
 #   nim debug     build and run a debug build, no hot reload (breakpoints never go stale)
 #   nim release   build and run a release build
 #   nim clean     remove out/ and build/
-#
-# and the web build, here (it needs emscripten's emcc):
 #
 #   nim web       build it for the web: out/web/<variant>/simple.js and simple.wasm, and
 #                 the assets' manifests (examples/tools/manifest.nim)
@@ -28,11 +25,11 @@ when not declared(nimscript):
   # what NimScript doesn't have already (it has getEnv, fileExists, findExe, mkDir, ...)
   from std/os import `/`, parentDir, quoteShell, relativePath
   from std/strutils import splitLines, strip
-  import "../../src/hotreload/tasks.nims"
 
   const thisDir = currentSourcePath().parentDir()
-  let target = BuildTarget(dir: thisDir, name: "simple")
-  hotReloadConfig(target)
+  const mainModule = thisDir / "src" / "main.nim"
+  # hotreload, from this repo (an installed hotreload needs no path)
+  switch("path", thisDir / ".." / ".." / "src")
 
   proc installedWgrender(): string =
     ## where nimble installed wgrender, or "" (its last line: nimble may warn first)
@@ -87,15 +84,30 @@ when not declared(nimscript):
     echo "Building simple (web)..."
     let site = thisDir / "out" / webVariant()
     mkDir(site)
-    exec "nim c -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
-         quoteShell(target.mainModule)
+    exec "nim c --hints:off -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
+         quoteShell(mainModule)
     # the assets' manifests, so the page fetches only what changed (unchanged ones stay)
     exec "nim r --hints:off " & quoteShell(thisDir.parentDir / "tools/manifest.nim") & " " &
          quoteShell(assetsDir)
     echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open " &
          "http://localhost:8000/"
 
-  hotReloadTasks(target, [("web", buildWeb)])
+  proc build(variant, flags: string) =
+    ## builds and runs src/main.nim: out/<os>/<variant>/simple, its Nim cache in build/
+    let variantDir = hostOS & "/" & variant
+    exec "nim c -r --hints:off " & flags & " --nimcache:" &
+         quoteShell(thisDir / "build" / variantDir) & " --out:" &
+         quoteShell(thisDir / "out" / variantDir / "simple") & " " & quoteShell(mainModule)
+
+  task hot, "Build and run with hot reload: edit src/simple.nim while it runs":
+    build("hot", "-d:hotReload -d:useMalloc --debugger:native")
+  task debug, "Build and run a debug build, no hot reload":
+    build("debug", "--debugger:native")
+  task release, "Build and run a release build":
+    build("release", "-d:release")
+  task clean, "Remove out/ and build/":
+    rmDir thisDir / "out"
+    rmDir thisDir / "build"
 
   task web, "Build for the web, simple.nim compiled in":
     buildWeb()
