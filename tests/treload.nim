@@ -3,8 +3,10 @@
 ## build/tests/reload/, builds the program with hot reload, runs it, and edits its copy of
 ## the code while it runs, reading what the program prints.
 
-import std/[os, osproc, streams, strutils, times, unittest]
-when not defined(windows):
+import std/[os, osproc, strutils, times, unittest]
+when defined(windows):
+  import std/streams
+else:
   import std/posix
 
 const
