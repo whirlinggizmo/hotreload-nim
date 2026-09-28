@@ -93,14 +93,23 @@ when not declared(nimscript):
     if defined(hotReload) or defined(hotReloadLibrary):
       switch("define", "useMalloc")
 
+    # what the code calls in the program (hotreload's own procs, an engine it links),
+    # which a Windows DLL has to be linked against: the hot program's import library
+    let programLib = target.dir / "build" / variantDir("hot") / "lib" & target.name & ".a"
+
     if defined(hotReloadLibrary):
       # the code alone, loaded by the running program
       switch("app", "lib")
       switch("noMain", "on")
+      if defined(windows):
+        switch("passL", quoteShell(programLib))
     elif defined(hotReload):
       # export the program's own symbols (an engine it links) for the code to resolve
       # against
-      switch("passL", "-rdynamic")
+      if defined(windows):
+        switch("passL", "-Wl,--export-all-symbols -Wl,--out-implib," & quoteShell(programLib))
+      else:
+        switch("passL", "-rdynamic")
       switch("nimcache", target.dir / "build" / variantDir("hot") / "nimcache")
       switch("define", "hotReloadBuildDir=" & target.dir / "build" / variantDir("hot") / "library")
     elif defined(release):

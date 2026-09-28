@@ -129,7 +129,7 @@ when defined(hotReload) or defined(hotReloadLibrary):
   type Hook = proc () {.cdecl.}
 
 when defined(hotReloadLibrary):
-  # the program's, which it exports (-rdynamic)
+  # the program's, which it exports (-rdynamic; on Windows, its import library)
   proc registerHook(kind: cint; hook: Hook) {.importc: "hotreload_hook", cdecl.}
 
 elif defined(hotReload):

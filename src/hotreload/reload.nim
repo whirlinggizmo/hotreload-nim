@@ -67,13 +67,27 @@ type Reloader* = ref object
     nextCheck: float
 
 when defined(hotReload):
-  const
-    RTLD_NOW = 2.cint
-    # the library's own symbols before the program's: its Nim runtime, not the program's
-    RTLD_DEEPBIND = 8.cint
+  when defined(windows):
+    const libExt = ".dll"
 
-  proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
-  proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
+    proc openLib(path: string): (LibHandle, string) =
+      ## the library, or why not. A DLL uses its own symbols before the program's anyway
+      let lib = loadLib(path)
+      (lib, if lib == nil: osErrorMsg(osLastError()) else: "")
+  else:
+    const
+      libExt = ".so"
+      RTLD_NOW = 2.cint
+      # the library's own symbols before the program's: its Nim runtime, not the program's
+      RTLD_DEEPBIND = 8.cint
+
+    proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
+    proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
+
+    proc openLib(path: string): (LibHandle, string) =
+      ## the library, or why not
+      let lib = dlopen(path.cstring, RTLD_NOW or RTLD_DEEPBIND)
+      (lib, if lib == nil: $dlerror() else: "")
 
   const hotReloadBuildDir {.strdefine.} = ""
     ## where the code's builds go (the libraries and their Nim cache), when the
@@ -107,7 +121,7 @@ when defined(hotReload):
 
   proc startBuild(r: Reloader) =
     inc r.version
-    r.building = r.buildDir / "lib" & r.code.splitFile.name & "_" & $r.version & ".so"
+    r.building = r.buildDir / "lib" & r.code.splitFile.name & "_" & $r.version & libExt
     var args = @["c", "-d:hotReloadLibrary", "--nimcache:" & r.buildDir / "nimcache",
                  "--out:" & r.building, r.code]
     when defined(release): args.insert("-d:release", 1)
@@ -116,9 +130,9 @@ when defined(hotReload):
     r.build = startProcess("nim", r.code.parentDir, args, options = {poUsePath, poParentStreams})
 
   proc swap(r: Reloader) =
-    let lib = dlopen(r.building.cstring, RTLD_NOW or RTLD_DEEPBIND)
+    let (lib, error) = openLib(r.building)
     if lib == nil:
-      echo "hotreload: can't load " & r.building & ": " & $dlerror()
+      echo "hotreload: can't load " & r.building & ": " & error
       return
     # Before any of the new code runs (its NimMain would carry hot globals over): the
     # program calls each hot proc the way it was compiled to

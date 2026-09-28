@@ -5,7 +5,7 @@ is rebuilt in the background and swapped in, without restarting and without losi
 state. Debug, release and web builds compile the same code in, with no reloading and no
 cost.
 
-Linux only, for now.
+Linux and Windows (with MinGW); not macOS yet.
 
 ```
 hotreload.nimble         the package: srcDir src, `import hotreload`
@@ -125,8 +125,8 @@ That gives `nim build hot|debug|release|all`, `nim hot`, `nim debug`, `nim relea
 The hot build (`-d:hotReload`) watches the code's sources. When one changes, it rebuilds
 the code (the code module and every module it imports, whichever changed) as one shared
 library (`-d:hotReloadLibrary`), loads it, and points the program's calls at the new
-code. Each reload is a new library (`libhello_1.so`, `libhello_2.so`, ...), replacing the
-last one whole.
+code. Each reload is a new library (`libhello_1.so`, `libhello_2.so`, ...; `.dll` on Windows),
+replacing the last one whole.
 
 The program keeps the hot globals, so the new code gets the same ones. When a reload
 changes a hot global's type, what still fits is carried over, field by field, by name.
@@ -138,7 +138,8 @@ the code it came from.
 
 ## Limits
 
-- Linux (it relies on `RTLD_DEEPBIND` and `-rdynamic`).
+- Linux and Windows. On Windows it takes MinGW's gcc: the code links against the hot
+  program's import library, which MinGW makes (`--out-implib`). No macOS yet.
 - A change to the parameters or result of a proc the program calls can't be swapped in:
   the reload is refused, with a message, and the old code runs on until a restart. So
   does adding or renaming one.

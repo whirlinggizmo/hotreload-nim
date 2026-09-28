@@ -111,6 +111,9 @@ suite "refs":
     var n = 0
     while b != nil: inc n; b = b.next
     check n == 100_000
+    # freed a node at a time: Nim's destructor frees a list as deep as it is long, too
+    # deep for Windows' 1 MB stack
+    while head != nil: head = head.next
 
   test "copy: the same type, in place, with new refs":
     type R = object

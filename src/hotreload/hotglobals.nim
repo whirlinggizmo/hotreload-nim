@@ -47,7 +47,7 @@ when defined(hotReload) or defined(hotReloadLibrary):
     HotCopy = proc (old: pointer): pointer {.cdecl.}
 
 when defined(hotReloadLibrary):
-  # the program's, which it exports (-rdynamic)
+  # the program's, which it exports (-rdynamic; on Windows, its import library)
   proc hotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
                load: HotLoad; copy: HotCopy): pointer {.importc: "hotreload_slot", cdecl.}
   proc hotreloadMoves(): int {.importc: "hotreload_moves", cdecl.}

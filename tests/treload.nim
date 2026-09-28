@@ -3,7 +3,9 @@
 ## build/tests/reload/, builds the program with hot reload, runs it, and edits its copy of
 ## the code while it runs, reading what the program prints.
 
-import std/[os, osproc, posix, strutils, times, unittest]
+import std/[os, osproc, streams, strutils, times, unittest]
+when not defined(windows):
+  import std/posix
 
 const
   repoDir = currentSourcePath().parentDir.parentDir
@@ -18,17 +20,30 @@ type Running = object
   ended: bool
 
 proc readable(r: Running; ms: int): bool =
-  ## whether the program has printed something, waiting up to `ms` for it (osproc's
-  ## hasData waits for as long as it takes)
-  var fds = [TPollfd(fd: r.p.outputHandle.cint, events: POLLIN)]
-  poll(addr fds[0], 1, ms.cint) > 0
+  ## whether the program has printed something, waiting up to `ms` for it
+  when defined(windows):
+    # osproc's hasData only looks (PeekNamedPipe); a pipe the program closed counts, for
+    # readSome to find it gone
+    let deadline = epochTime() + ms / 1000
+    while true:
+      if r.p.hasData or not r.p.running: return true
+      if epochTime() >= deadline: return false
+      sleep 5
+  else:
+    # (osproc's hasData waits for as long as it takes)
+    var fds = [TPollfd(fd: r.p.outputHandle.cint, events: POLLIN)]
+    poll(addr fds[0], 1, ms.cint) > 0
 
 proc readSome(r: var Running) =
   ## what the program has printed since, into `log`. Read from the pipe itself: a
-  ## buffered reader (outputStream) takes in more than a line, and a check of the pipe
-  ## (readable) then misses what it holds
+  ## buffered reader takes in more than a line, and a check of the pipe (readable) then
+  ## misses what it holds
   var buf: array[4096, char]
-  let n = read(r.p.outputHandle.cint, addr buf[0], buf.len)
+  when defined(windows):
+    # the output stream is the pipe, unbuffered: a read takes what's there
+    let n = if r.p.hasData: r.p.outputStream.readData(addr buf[0], buf.len) else: 0
+  else:
+    let n = read(r.p.outputHandle.cint, addr buf[0], buf.len)
   if n == 0:
     r.ended = true   # the program closed its output: it's gone
     return
@@ -70,21 +85,22 @@ suite "hot reload, while it runs":
   createDir(appDir)
   for f in ["main.nim", "code.nim"]:
     copyFile(fixture / f, appDir / f)
-  # a literal path: NimScript won't take another
+  # a literal path: NimScript won't take another (with /, which a Windows one's \ would
+  # escape)
   writeFile(appDir / "config.nims", """
 from std/os import parentDir
 import "$1"
 let target = BuildTarget(dir: currentSourcePath().parentDir, name: "app",
                          main: "main.nim", code: "code.nim")
 hotReloadConfig(target)
-""" % (repoDir / "src/hotreload/tasks.nims"))
+""" % (repoDir / "src/hotreload/tasks.nims").replace('\\', '/'))
 
   let (output, code) = execCmdEx("nim c -d:hotReload --out:" & quoteShell(appDir / "app") &
                                  " main.nim", workingDir = appDir)
   if code != 0: echo output
   require code == 0
 
-  var r = Running(p: startProcess(appDir / "app", workingDir = appDir,
+  var r = Running(p: startProcess(appDir / "app".addFileExt(ExeExt), workingDir = appDir,
                                   options = {poStdErrToStdOut}))
 
   teardown:
