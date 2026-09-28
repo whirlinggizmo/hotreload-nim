@@ -1,7 +1,7 @@
 # hotreload's build, for a program's config.nims: the switches a hot build needs, and the
 # tasks that build and run each variant.
 #
-#   import "../../src/hotreload/tasks.nims"  # a literal path: NimScript won't take another
+#   import "../../src/hotreload/tasks.nims"  # or computed: see the README
 #
 #   let target = BuildTarget(dir: thisDir(), name: "hello")
 #   hotReloadConfig(target)                  # first: what follows can add to it or override

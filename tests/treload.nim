@@ -85,8 +85,7 @@ suite "hot reload, while it runs":
   createDir(appDir)
   for f in ["main.nim", "code.nim"]:
     copyFile(fixture / f, appDir / f)
-  # a literal path: NimScript won't take another (with /, which a Windows one's \ would
-  # escape)
+  # its path with /: a Windows one's \ would be an escape
   writeFile(appDir / "config.nims", """
 from std/os import parentDir
 import "$1"
