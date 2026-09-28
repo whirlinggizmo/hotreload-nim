@@ -1,17 +1,19 @@
 ## Hot procs and reload hooks: the procs a reload has to know about.
 ##
 ## `proc onTick*() {.hot.}` (reload.nim's `hot` passes a proc here, to hotProc): a proc the
-## program calls. The program is compiled once, so its call would reach the version it was
-## built with forever; in a hot build (-d:hotReload) the program gets a stub by that name,
-## which calls through a pointer that each reload points at the new library's version. The
-## library exports it, and a hash of its signature, which the reloader checks before any
-## new code runs. Everywhere else it's an ordinary proc. Only the procs the program calls
-## need it: calls within the code are all in the new library anyway.
+## main module calls. The main module is compiled once, so its call would reach the
+## version it was built with forever; in a hot build (-d:hotReload) the main module gets a
+## stub by that name, which calls through a pointer that each reload points at the new
+## library's version. The library exports it, and a hash of its signature, which the
+## reloader checks before any new code runs. Everywhere else it's an ordinary proc. Only
+## the procs the main module calls need it: calls within the library are all to the new
+## code anyway.
 ##
-## `proc fixUp() {.afterHotReload.}` and `proc wrapUp() {.beforeHotReload.}`: the code's
-## own reload hooks, which the reloader calls, after a reload on the new code, before one
-## on the old. No parameters, no result; at most one of each per module, run in the order
-## the modules start (their imports first). Everywhere but a hot build nothing calls them.
+## `proc fixUp() {.afterHotReload.}` and `proc wrapUp() {.beforeHotReload.}`: reload
+## hooks, in the reloaded modules, which the reloader calls, after a reload on the new
+## code, before one on the old. No parameters, no result; at most one of each per module,
+## run in the order the modules start (their imports first). Everywhere but a hot build
+## nothing calls them.
 
 import std/[macros, tables]
 import ./hotglobals
@@ -22,7 +24,7 @@ when defined(hotReload) or defined(hotReloadLibrary):
 when defined(hotReload) or defined(hotReloadLibrary):
   # what {.hot.} makes a stub or an export from, in a hot build
   proc cName(key: string): string {.compileTime.} =
-    ## a hot proc's symbol in the code's library
+    ## a hot proc's symbol in the library
     result = "hotreload_"
     for c in key:
       result.add(if c in {'a'..'z', 'A'..'Z', '0'..'9'}: c else: '_')
@@ -54,21 +56,21 @@ when defined(hotReload) or defined(hotReloadLibrary):
 when defined(hotReload):
   type Entry* = object
     key*: string          ## module.name
-    cname*: string        ## its symbol in the code's library
+    cname*: string        ## its symbol in the library
     target*: ptr pointer  ## the stub's: what it calls
     sig*: int
 
   var entries*: seq[Entry]
-    ## every hot proc the program calls, for a reload to point at the new code
+    ## every hot proc the main module calls, for a reload to point at the new code
 
   proc registerEntry*(key, cname: string; target: ptr pointer; sig: int) =
-    ## a hot proc's stub, for a reload to point at the new code (called as the program
+    ## a hot proc's stub, for a reload to point at the new code (called as the executable
     ## starts, by what {.hot.} makes)
     entries.add Entry(key: key, cname: cname, target: target, sig: sig)
 
 macro hotProc*(def: untyped): untyped =
-  ## `proc p() {.hot.}`: a proc the program calls, whose calls each reload points at the
-  ## new code (reload.nim's `hot` passes a proc here)
+  ## `proc p() {.hot.}`: a proc the main module calls, whose calls each reload points at
+  ## the new code (reload.nim's `hot` passes a proc here)
   if def.kind notin {nnkProcDef, nnkFuncDef}:
     error("{.hot.}: a proc", def)
   if def[2].kind != nnkEmpty:
@@ -82,7 +84,7 @@ macro hotProc*(def: untyped): untyped =
     let sig = sigOfProc(def.params)
 
     when defined(hotReloadLibrary):
-      # the code, under its symbol, and its signature, for the program to check first
+      # the proc, under its symbol, and its signature, for the executable to check first
       result = newStmtList(def)
       def.addPragma ident"cdecl"
       def.addPragma newColonExpr(ident"exportc", newLit(cname))
@@ -91,8 +93,9 @@ macro hotProc*(def: untyped): untyped =
       result.add quote do:
         proc `sigProc`(): int {.cdecl, exportc: `cname` & "_sig", dynlib.} = `sig`
     elif defined(hotReload):
-      # the stub: the program's name for it, which calls through `target`. At first that's
-      # the code compiled in; a swap points it at the new library's
+      # the stub: the main module's name for it, which calls through `target`. At first
+      # that's the version compiled into the executable; a swap points it at the new
+      # library's
       let impl = copyNimTree(def)
       impl[0] = genSym(nskProc, $base & "Impl")
       impl.addPragma ident"cdecl"
@@ -129,16 +132,16 @@ when defined(hotReload) or defined(hotReloadLibrary):
   type Hook = proc () {.cdecl.}
 
 when defined(hotReloadLibrary):
-  # the program's, which it exports (-rdynamic; on Windows, its import library)
+  # the executable's, which it exports (-rdynamic; on Windows, its import library)
   proc registerHook(kind: cint; hook: Hook) {.importc: "hotreload_hook", cdecl.}
 
 elif defined(hotReload):
   var hooks: array[HookKind, seq[Hook]]
-    ## the running code's hooks: the compiled-in code's, then each library's
+    ## the running code's hooks: those compiled into the executable, then each library's
 
   proc registerHook(kind: cint; hook: Hook) {.exportc: "hotreload_hook", cdecl, dynlib.} =
-    ## a hook, as its module starts (the compiled-in code at the program's start, a
-    ## library in its NimMain)
+    ## a hook, as its module starts (compiled into the executable, as it starts; a
+    ## library's, in its NimMain)
     hooks[HookKind(kind)].add hook
 
   proc runHooks*(kind: HookKind) =

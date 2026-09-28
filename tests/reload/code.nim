@@ -1,4 +1,4 @@
-## The smoke test's code, which the program reloads: treload.nim edits its copy.
+## The smoke test's reloaded module: treload.nim edits its copy while it runs.
 
 import hotreload
 

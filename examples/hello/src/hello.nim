@@ -1,4 +1,4 @@
-## hotreload's hello: the code, which `nim hot` reloads. Edit it while it runs (the
+## hotreload's hello: the reloaded module. Edit it while it runs (the
 ## greeting, the name, how often it speaks) and save.
 
 import hotreload
@@ -9,7 +9,7 @@ var name {.hot.} = "world"   # kept across reloads. Its first value is used once
 var ticks {.hot.} = 0        # kept: it counts on through each reload
 var sinceReload = 0          # a plain global: starts over with each reload
 
-proc onStart*() {.hot.} =
+proc onStart*() =
   when defined(hotReload):
     echo "hello: running. Edit src/hello.nim and save; Ctrl-C to stop."
   else:

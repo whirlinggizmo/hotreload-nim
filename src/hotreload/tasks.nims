@@ -8,17 +8,17 @@
 #   ...                                      # the program's own switches
 #   hotReloadTasks(target)                   # or hotReloadTasks(target, [("web", buildWeb)])
 #
-# The program's main module is src/main.nim, and the code it hot reloads src/<name>.nim
-# (BuildTarget's main and code say otherwise).
+# The program's main module is src/main.nim, and the module that's reloaded (with what it
+# imports) src/<name>.nim (BuildTarget's main and code say otherwise).
 #
 # The variants, each making what it makes in out/<platform>/<variant>/ and keeping its
 # work (Nim's cache) in build/<platform>/<variant>/:
 #
-#   hot       -d:hotReload, a debug build that rebuilds its code as a library when a source
-#             changes (-d:hotReloadLibrary, into build/<platform>/hot/library/) and swaps
-#             it in
-#   debug     the code compiled in, no hot reload (breakpoints never go stale)
-#   release   the code compiled in, -d:release
+#   hot       -d:hotReload, a debug build that rebuilds all but the main module as a
+#             library when a source changes (-d:hotReloadLibrary, into
+#             build/<platform>/hot/library/) and swaps it in
+#   debug     one executable, no hot reload (breakpoints never go stale)
+#   release   one executable, -d:release
 #
 # and the tasks:
 #
@@ -39,7 +39,8 @@ when not declared(nimscript):
     dir*: string    ## the program's directory: its config.nims's
     name*: string   ## the program's name: what the builds are called
     main*: string   ## its main module, when not src/main.nim
-    code*: string   ## the module it hot reloads, when not src/<name>.nim
+    code*: string   ## the module that's reloaded (with what it imports), when not
+                    ## src/<name>.nim
 
   type ExtraBuild* = tuple
     ## a build target of the program's own, for `nim build <name>` (and `all`)
@@ -67,11 +68,11 @@ when not declared(nimscript):
 
   proc hotReloadConfig*(target: BuildTarget) =
     ## the switches for this compile: its variant's (from -d:hotReload, -d:hotReloadLibrary,
-    ## -d:release), the path to hotreload, and the code's module
+    ## -d:release), the path to hotreload, and the reloaded module
     # hotreload's modules: `import hotreload`
     switch("path", currentSourcePath().parentDir.parentDir)
-    # which module is the code: the library a hot build makes of it, and where hot globals'
-    # and procs' keys are from
+    # which module is reloaded: the library a hot build makes of it, and where hot
+    # globals' and procs' keys are from
     switch("define", "hotReloadCode=" & target.codeModule)
 
     # no hints for builds and tasks, but a check keeps them: `nim check` (an editor's)
@@ -84,28 +85,30 @@ when not declared(nimscript):
       return
 
     # debug builds carry DWARF line info mapped to the .nim sources, for gdb/lldb; the
-    # host builds its code with the same -d:release it was built with, so they match
+    # hot executable builds its library with the same -d:release it was built with, so
+    # they match
     if not defined(release):
       switch("debugger", "native")
 
-    # the program and its code share one heap (libc's), so either may free what the other
-    # made
+    # the executable and its library share one heap (libc's), so either may free what the
+    # other made
     if defined(hotReload) or defined(hotReloadLibrary):
       switch("define", "useMalloc")
 
-    # what the code calls in the program (hotreload's own procs, an engine it links),
-    # which a Windows DLL has to be linked against: the hot program's import library
+    # what the library calls in the executable (hotreload's own procs, an engine it
+    # links), which a Windows DLL has to be linked against: the hot executable's import
+    # library
     let programLib = target.dir / "build" / variantDir("hot") / "lib" & target.name & ".a"
 
     if defined(hotReloadLibrary):
-      # the code alone, loaded by the running program
+      # all but the main module, loaded by the running executable
       switch("app", "lib")
       switch("noMain", "on")
       if defined(windows):
         switch("passL", quoteShell(programLib))
     elif defined(hotReload):
-      # export the program's own symbols (an engine it links) for the code to resolve
-      # against
+      # export the executable's own symbols (an engine it links) for the library to
+      # resolve against
       if defined(windows):
         switch("passL", "-Wl,--export-all-symbols -Wl,--out-implib," & quoteShell(programLib))
       else:

@@ -1,4 +1,4 @@
-## The smoke test's program (treload.nim builds and runs a copy): calls the code every
+## The smoke test's main module (treload.nim builds and runs a copy): calls code.nim every
 ## few milliseconds and prints what it reports when that changes, until a file named
 ## `quit` appears (or, should the test die first, five minutes pass).
 

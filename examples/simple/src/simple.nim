@@ -98,7 +98,7 @@ proc drawOverlay(mouse: MouseState) =
 
   debugFont.drawFps(10, 10, DebugFontSize, greyAlpha)
 
-proc onInit*() {.hot.} =
+proc onInit*() =
   ## once, at startup
   setLogLevel(LogLevel.Warn)
   setTargetFps(60)

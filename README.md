@@ -9,52 +9,62 @@ Linux and Windows (with MinGW, the gcc that choosenim installs); not macOS yet.
 
 ## A program that hot reloads
 
-It's two parts. The **program** is its main module: it sets things up, runs the loop,
-and calls into the **code**, a module it imports (with everything that imports). Only
-the code is reloaded; a change to the program takes a restart.
+The **main module** (`src/main.nim`) is compiled into the executable and is never
+reloaded: a change to it requires a restart. It creates the reloader, which has to be
+made there, and calls `reloader.update()` in its loop, which is what drives each reload.
+
+The rest of the program, the module the main module imports (`src/game.nim` here) and
+everything that imports, is reloaded: the hot build starts with it compiled in, and
+whenever one of its sources changes, rebuilds all of it as one shared library and swaps
+that in. (A module only the main module imports stays in the executable, like the main
+module.)
 
 ```nim
-# src/main.nim: the program
+# src/main.nim: the main module, never reloaded
 import hotreload
 import ./game
 
 let reloader = newReloader()
 
-onStart()
+game.onStart()
 while running():
-  reloader.update()   # rebuilds the code and swaps it in when a source changed
-  onFrame()           # the latest onFrame
+  reloader.update()   # rebuilds the library and swaps it in, when a source changed
+  game.onFrame()      # the newest onFrame, after a reload too
 ```
 
 ```nim
-# src/game.nim: the code
+# src/game.nim, and what it imports: reloaded
 import hotreload
 
 var score {.hot.} = 0            # kept across reloads
 var player {.hot.}: Player       # kept too, even when Player's fields change
 
-proc onStart*() {.hot.} = ...    # a proc the program calls
-proc onFrame*() {.hot.} = ...
+proc onStart*() = ...            # called once, before any reload: an ordinary proc
+proc onFrame*() {.hot.} = ...    # called on every frame: the newest version
 
 proc fixUp() {.afterHotReload.} = ...   # runs after each reload, on the new code
 ```
 
-Three pragmas, all in the code:
+Three pragmas, used in the reloaded modules:
 
-- **`{.hot.}` on a global** keeps it across reloads. When a reload changes its type, what
-  still fits is carried over and the rest starts from the first value. That first value
-  is used once, when it's made: to change a kept value, assign it.
-- **`{.hot.}` on a proc** marks one the program calls. The program is compiled once, so
-  its calls would otherwise reach the version it was built with; these follow each
-  reload. Only the procs the program calls need it: everything else in the code is
-  reloaded anyway.
-- **`{.beforeHotReload.}` and `{.afterHotReload.}`** mark the code's own reload hooks,
-  which the reloader calls: before a reload on the old code, after one on the new. No
-  parameters, and at most one of each per module.
+- **`{.hot.}` on a global** keeps it across reloads: the executable holds it, and each
+  new library is handed the same one. When a reload changes its type, what still fits is
+  carried over and the rest starts from the first value. That first value is used once,
+  when it's made: to change a kept value, assign it. A global without it starts over
+  with each reload.
+- **`{.hot.}` on a proc** marks one the main module calls after a reload. The main
+  module is compiled once, so its calls would otherwise reach the version it was built
+  with; these follow each reload to the newest version. A proc it calls only before any
+  reload (a start-up proc) doesn't need it, and a proc only the library calls doesn't
+  either: calls within the library are all to the new code anyway.
+- **`{.beforeHotReload.}` and `{.afterHotReload.}`** mark reload hooks, which the reloader
+  calls: before a reload on the old code, after one on the new. No parameters, and at
+  most one of each per module.
 
-The program's names for its calls (`onStart`, `onFrame`) are its own: hotreload calls
-none of them. It calls only the hooks, and `reloader.beforeReload` and
-`reloader.afterReload`, if the program sets them, for its own business around a reload.
+The names of the procs the main module calls (`onStart`, `onFrame`) are its own:
+hotreload calls none of them. It calls only the hooks, and `reloader.beforeReload` and
+`reloader.afterReload`, if the main module sets them, for its own business around a
+reload.
 
 ## The build
 
@@ -78,16 +88,17 @@ hotReloadTasks(target)    # the tasks
 (With a copy of hotreload at a known place, `import "<path>/src/hotreload/tasks.nims"`
 does the same.)
 
-`BuildTarget` names the program. Its main module is `src/main.nim` and its code
-`src/<name>.nim`, unless `main` and `code` say otherwise, as paths from `dir`.
+`BuildTarget` names the program. Its main module is `src/main.nim`, and the module
+that's reloaded (with what it imports) `src/<name>.nim`, unless `main` and `code` say
+otherwise, as paths from `dir`.
 
 That gives three builds of the program:
 
-| Build     | What it is                                                         |
-|-----------|--------------------------------------------------------------------|
-| `hot`     | a debug build that rebuilds the code while it runs, and reloads it |
-| `debug`   | the code compiled in: no reloading, and breakpoints don't go stale |
-| `release` | the code compiled in, `-d:release`                                 |
+| Build     | What it is                                                               |
+|-----------|--------------------------------------------------------------------------|
+| `hot`     | a debug build that rebuilds the library while it runs, and reloads it    |
+| `debug`   | one executable, no library: no reloading, and breakpoints don't go stale |
+| `release` | one executable, no library, `-d:release`                                 |
 
 `nim hot`, `nim debug` and `nim release` build one and run it; `nim build
 hot|debug|release|all` only builds, and `nim clean` removes what they made. Each build
@@ -96,8 +107,8 @@ The hot build's libraries go in `build/<platform>/hot/library/`.
 
 ## Trying it
 
-`examples/hello` is a console program that hot reloads: `src/main.nim` is the program,
-`src/hello.nim` the code.
+`examples/hello` is a console program that hot reloads: `src/main.nim` is its main
+module, and `src/hello.nim` is reloaded.
 
 ```
 cd examples/hello
@@ -120,13 +131,14 @@ one, so it starts over.
 
 ## How it works
 
-The hot build (`-d:hotReload`) watches the code's sources. When one changes, it rebuilds
-the code (the code module and every module it imports, whichever changed) as one shared
-library (`-d:hotReloadLibrary`), loads it, and points the program's calls at the new
-code. Each reload is a new library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on
-Windows), replacing the last one whole.
+The hot build (`-d:hotReload`) watches the sources beside the reloaded module and below
+it, except the main module. When one changes, it rebuilds the reloaded module and every
+module it imports, whichever changed, as one shared library (`-d:hotReloadLibrary`),
+loads it, and points the main module's calls at the new code. Each reload is a new
+library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Windows), replacing the last one
+whole.
 
-The program keeps the hot globals, so the new code gets the same ones. When a reload
+The executable keeps the hot globals, so the new code gets the same ones. When a reload
 changes a hot global's type, what still fits is carried over, field by field, by name.
 That covers objects, tuples, seqs, arrays, and refs, which are copied as a graph: shared
 stays shared, and cycles stay cycles.
@@ -136,12 +148,12 @@ the code it came from.
 
 ## Limits
 
-- No macOS yet. On Windows, MinGW's gcc only, not MSVC: the code links against the hot
-  program's import library, which MinGW's linker makes (`--out-implib`).
-- A change to the parameters or result of a proc the program calls can't be swapped in:
-  the reload is refused, with a message, and the old code runs on until a restart. So
-  does adding or renaming one.
-- A change to the program's main module needs a restart.
+- No macOS yet. On Windows, MinGW's gcc only, not MSVC: the library links against the
+  hot executable's import library, which MinGW's linker makes (`--out-implib`).
+- A change to the parameters or result of a proc the main module calls can't be swapped
+  in: the reload is refused, with a message, and the old code runs on until a restart.
+  So does adding or renaming one.
+- A change to the main module requires a restart.
 - Hot globals can't hold pointers, closures, or refs to objects that inherit.
 - Old libraries, and the old copies of hot globals whose type changed, aren't freed.
 - Breakpoints go stale after a reload shifts lines; the debug build doesn't reload.
@@ -160,8 +172,8 @@ src/hotreload/
   tasks.nims             the build variants and their tasks, for a program's config.nims
 tests/                   `nimble test`: the modules' tests, and treload.nim, a smoke test
                          that builds tests/reload/ hot, runs it and edits it while it runs
-examples/hello/          a console program: src/main.nim, the program, and src/hello.nim,
-                         the code it reloads
+examples/hello/          a console program: src/main.nim, its main module, and
+                         src/hello.nim, which is reloaded
 ```
 
 ## License

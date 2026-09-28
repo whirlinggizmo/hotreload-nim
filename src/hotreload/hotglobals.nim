@@ -1,10 +1,10 @@
-## Globals that survive a reload: `var enemies {.hot.}: seq[Enemy]`, or with a first value,
-## `var speed {.hot.} = 1.0`. In a hot build the program keeps each one, by its module (its
-## path from the code's directory: `player/state.speed`) and name, and every library that
-## loads is handed the one that's there: its first value is used once, when it's first
-## made. When a reload changes its type, what still fits is carried over (migrate.nim)
-## and the rest starts from the first value. Everywhere else (debug, release, web) it's an
-## ordinary global.
+## Globals that survive a reload: `var enemies {.hot.}: seq[Enemy]`, or with a first
+## value, `var speed {.hot.} = 1.0`. In a hot build the executable keeps each one, by its
+## module (its path from the reloaded module's directory: `player/state.speed`) and name,
+## and every library that loads is handed the one that's there: its first value is used
+## once, when it's first made. When a reload changes its type, what still fits is carried
+## over (migrate.nim) and the rest starts from the first value. Everywhere else (debug,
+## release, web) it's an ordinary global.
 ##
 ## A type change is found from the type itself (typeSig): fields, their types, and the
 ## types inside those, not the source, so a comment or a proc next to it changes nothing.
@@ -25,13 +25,15 @@ import ./[migrate, typesig]
 export migrate, typesig, hashes
 
 const hotReloadCode* {.strdefine.} = ""
-  ## the code's module, which a hot build rebuilds as a library (hotReloadConfig sets it)
+  ## the reloaded module, which a hot build rebuilds as a library (hotReloadConfig sets
+  ## it)
 
 proc moduleKey*(n: NimNode): string {.compileTime.} =
-  ## where `n` is: its module's path from the code's directory, without the extension
-  ## (`player/state`). The program and each library are built with the same code module,
-  ## so each makes the same key (without one, a test's: its main module's directory); by
-  ## path, so two modules with one name in different directories don't share
+  ## where `n` is: its module's path from the reloaded module's directory, without the
+  ## extension (`player/state`). The executable and each library are built with the same
+  ## reloaded module, so each makes the same key (without one, a test's: its main
+  ## module's directory); by path, so two modules with one name in different directories
+  ## don't share
   when defined(hotReload) or defined(hotReloadLibrary):
     let root = if hotReloadCode.len > 0: hotReloadCode.parentDir
                else: querySetting(projectPath)
@@ -47,7 +49,7 @@ when defined(hotReload) or defined(hotReloadLibrary):
     HotCopy = proc (old: pointer): pointer {.cdecl.}
 
 when defined(hotReloadLibrary):
-  # the program's, which it exports (-rdynamic; on Windows, its import library)
+  # the executable's, which it exports (-rdynamic; on Windows, its import library)
   proc hotSlot(key: cstring; stamp: int; refs: bool; make: HotMake; save: HotSave;
                load: HotLoad; copy: HotCopy): pointer {.importc: "hotreload_slot", cdecl.}
   proc hotreloadMoves(): int {.importc: "hotreload_moves", cdecl.}
@@ -98,7 +100,7 @@ elif defined(hotReload):
     hotSlots[k].data
 
   proc hotKeys*(): seq[string] =
-    ## the hot globals the program keeps, by key
+    ## the hot globals the executable keeps, by key
     for k in hotSlots.keys: result.add k
 
 else:
@@ -124,7 +126,7 @@ macro hotGlobal*(def: untyped): untyped =
       let base = if name.kind == nnkPostfix: name[1] else: name
       let typ = if d[1].kind != nnkEmpty: d[1] else: newCall(ident"typeof", d[2])
       let first = if d[2].kind != nnkEmpty: d[2] else: newCall(ident"default", typ)
-      # the same key in the program and in each library (moduleKey)
+      # the same key in the executable and in each library (moduleKey)
       let key = newLit(moduleKey(def) & "." & $base)
       # named, not gensym'd: what a debugger shows for the global (`speedHotSlot[]`)
       let slot = ident($base & "HotSlot")

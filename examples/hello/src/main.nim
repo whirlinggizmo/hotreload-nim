@@ -1,5 +1,6 @@
-## hotreload's hello: the program. It calls the code (hello.nim) a few times a second;
-## run it with `nim hot`, edit hello.nim, save, and the next calls are the new code.
+## hotreload's hello: the main module, never reloaded. It calls hello.nim a few times a
+## second; run it with `nim hot`, edit hello.nim, save, and the next calls are the new
+## code.
 ## Ctrl-C to stop.
 
 import std/os

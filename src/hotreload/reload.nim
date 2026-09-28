@@ -1,32 +1,32 @@
-## Hot reload for a Nim program: while it runs, the code it calls is rebuilt when a source
-## changes, as a shared library, in the background, and swapped in, without stopping.
-## Nothing here knows what the program is.
+## Hot reload for a Nim program: while it runs, everything but its main module is rebuilt
+## when a source changes, as a shared library, in the background, and swapped in, without
+## stopping. Nothing here knows what the program is.
 ##
-## A program that hot reloads is two parts: the program, its main module, which sets
-## things up, runs the loop and calls into the code; and the code, a module the main
-## module imports, with everything that imports. Each reload builds all of the code into
-## one library; a change to the main module takes a restart. Built any other way (debug,
-## release, web), the two are one ordinary program.
+## The main module is compiled into the executable and never reloaded: a change to it
+## requires a restart. It makes the reloader, which has to be made there, runs the loop,
+## and calls into the reloaded module, which it imports. That module, with everything it
+## imports, is built into one library, rebuilt whole with each reload. Built any other
+## way (debug, release, web), it's all one ordinary executable.
 ##
-##   # main.nim: the program
+##   # main.nim: the main module, never reloaded
 ##   import hotreload, game
 ##   let reloader = newReloader()
 ##   while running:
 ##     reloader.update()   # rebuilds and swaps when a source changed
-##     onFrame(dt)         # the latest onFrame
+##     game.onFrame(dt)    # the newest onFrame
 ##
-##   # game.nim: the code
+##   # game.nim, and what it imports: reloaded
 ##   import hotreload
 ##   var score {.hot.} = 0                    # kept across reloads (hotglobals.nim)
-##   proc onFrame*(dt: float) {.hot.} = ...   # the program's calls follow reloads
+##   proc onFrame*(dt: float) {.hot.} = ...   # the main module's calls follow reloads
 ##   proc fixUp() {.afterHotReload.} = ...    # run after each reload (hotprocs.nim)
 ##
-## A reload whose code changed the signature of a hot proc (its parameters or result) is
-## refused: the program would call it the old way. Restart to run it.
+## A reload that changed the signature of a hot proc (its parameters or result) is
+## refused: the main module would call it the old way. Restart to run it.
 ##
 ## A replaced library stays loaded, so a callback its code handed out keeps working, but
 ## runs the code it came from: fine for a one-off (an asset arriving), not for one that
-## keeps firing (a frame callback), which the program registers and points at a hot
+## keeps firing (a frame callback), which the main module registers and points at a hot
 ## proc. If a reload has moved a hot global to new storage since the callback was made,
 ## what it writes there is lost: `hotMoves()` tells it.
 
@@ -37,8 +37,8 @@ import ./hotprocs
 export hotprocs
 
 macro hot*(def: untyped): untyped =
-  ## `var x {.hot.}: T` or `proc p() {.hot.}`: what the program relies on across reloads.
-  ## A global is kept (hotglobals.nim), a proc's calls from the program follow the new code
+  ## `var x {.hot.}: T` or `proc p() {.hot.}`: what survives a reload. A global is kept
+  ## (hotglobals.nim), a proc's calls from the main module follow the new code
   ## (hotprocs.nim)
   case def.kind
   of nnkVarSection: result = newCall(bindSym"hotGlobal", def)
@@ -49,14 +49,15 @@ when defined(hotReload):
   import std/[dynlib, os, osproc, strutils, times]
 
 type Reloader* = ref object
-  ## the program's side of hot reload: `update` it every frame (or loop)
+  ## the main module's side of hot reload: `update` it every frame (or loop)
   beforeReload*: proc ()
-    ## the program's: just before a swap, after the old code's {.beforeHotReload.} hooks
+    ## the main module's: just before a swap, after the old code's {.beforeHotReload.}
+    ## hooks
   afterReload*: proc ()
-    ## the program's: just after, after the new code's {.afterHotReload.} hooks
+    ## the main module's: just after, after the new code's {.afterHotReload.} hooks
   when defined(hotReload):
-    code: string              ## the code's module: what's built as the library
-    program: string           ## the program's main module: watched for nothing
+    code: string              ## the reloaded module: what's built as the library
+    program: string           ## the main module: not watched
     buildDir: string
     lib: LibHandle
     version: int
@@ -71,14 +72,16 @@ when defined(hotReload):
     const libExt = ".dll"
 
     proc openLib(path: string): (LibHandle, string) =
-      ## the library, or why not. A DLL uses its own symbols before the program's anyway
+      ## the library, or why not. A DLL uses its own symbols before the executable's
+      ## anyway
       let lib = loadLib(path)
       (lib, if lib == nil: osErrorMsg(osLastError()) else: "")
   else:
     const
       libExt = ".so"
       RTLD_NOW = 2.cint
-      # the library's own symbols before the program's: its Nim runtime, not the program's
+      # the library's own symbols before the executable's: its Nim runtime, not the
+      # executable's
       RTLD_DEEPBIND = 8.cint
 
     proc dlopen(path: cstring; flags: cint): LibHandle {.importc, header: "<dlfcn.h>".}
@@ -90,19 +93,20 @@ when defined(hotReload):
       (lib, if lib == nil: $dlerror() else: "")
 
   const hotReloadBuildDir {.strdefine.} = ""
-    ## where the code's builds go (the libraries and their Nim cache), when the
+    ## where the library builds go (the libraries and their Nim cache), when the
     ## program's config names one: -d:hotReloadBuildDir=<dir>
 
   proc sources(r: Reloader): seq[(string, Time)] =
-    ## the .nim files in the code's directory and below, but the program's main module,
+    ## the .nim files in the reloaded module's directory and below, but the main module,
     ## and when each last changed
     for path in walkDirRec(r.code.parentDir):
       if path.splitFile.ext == ".nim" and path != r.program:
         result.add (path, getLastModificationTime(path))
 
   proc newReloader*(code, program: string): Reloader =
-    ## watches the .nim files in `code`'s directory and below (but `program`'s), and
-    ## rebuilds `code` as a library when one changes. `newReloader()` passes both
+    ## watches the .nim files in `code`'s directory and below (but `program`, the main
+    ## module), and rebuilds `code`, the reloaded module, as a library when one changes.
+    ## `newReloader()` passes both
     result = Reloader(code: code, program: program)
     result.buildDir =
       if hotReloadBuildDir.len > 0: hotReloadBuildDir
@@ -112,10 +116,10 @@ when defined(hotReload):
     echo "hotreload: watching " & code.parentDir & " for changes to " & code.extractFilename
 
   template newReloader*(): Reloader =
-    ## call once, in the program's main module: the code is the module hotReloadConfig
+    ## call once, in the main module: the reloaded module is the one hotReloadConfig
     ## names (-d:hotReloadCode=<module>)
     when hotReloadCode.len == 0:
-      {.error: "hotreload: which module is the code? -d:hotReloadCode=<module> " &
+      {.error: "hotreload: which module is reloaded? -d:hotReloadCode=<module> " &
                "(hotReloadConfig sets it)".}
     newReloader(hotReloadCode, instantiationInfo(fullPaths = true).filename)
 
@@ -135,7 +139,7 @@ when defined(hotReload):
       echo "hotreload: can't load " & r.building & ": " & error
       return
     # Before any of the new code runs (its NimMain would carry hot globals over): the
-    # program calls each hot proc the way it was compiled to
+    # main module calls each hot proc the way it was compiled to
     var changed: seq[string]
     for e in entries:
       let sigName = e.cname & "_sig"
@@ -189,7 +193,7 @@ when defined(hotReload):
 
 else:
   template newReloader*(): Reloader =
-    ## outside a hot build, nothing to watch: the code is compiled in
+    ## outside a hot build, nothing to watch: it's all one executable
     Reloader()
 
   proc update*(r: Reloader) {.inline.} = discard
