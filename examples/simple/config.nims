@@ -7,15 +7,15 @@
 #   nim release   build and run a release build
 #   nim clean     remove out/ and build/
 #
-# and wgrender's web build, here:
+# and the web build, here (it needs emscripten's emcc):
 #
-#   nim web       build it for the web: out/web/<variant>/ with simple.js + simple.wasm
-#                 and wgrender-nim's page
-#   nim serve     serve the web build on http://localhost:8000 (assets at /assets)
+#   nim web       build it for the web: out/web/<variant>/simple.js and simple.wasm, and
+#                 the assets' manifests (examples/tools/manifest.nim)
+#   nim serve     serve the build with the examples' page (examples/www/) and assets
+#                 (examples/assets/) on http://localhost:8000 (examples/tools/serve.nim)
 #
 # wgrender: the installed package (nimble install https://github.com/whirlinggizmo/wgrender-nim),
-# or a wgrender-nim checkout at WGRENDER_NIM, when you're working on wgrender too. The web
-# build needs a checkout, for its page and tools, which the package doesn't carry. The
+# or a wgrender-nim checkout at WGRENDER_NIM, when you're working on wgrender too. The
 # assets are the examples' own, in examples/assets/ (copies of wgrender's; licenses in
 # CREDITS.md). Web options, as wgrender-nim reads them:
 #   BACKEND=webgl2|webgpu   WEB_THREADS=1|0   WEB_DEBUG=0|1
@@ -47,15 +47,11 @@ when not declared(nimscript):
          "(or WGRENDER_NIM=<a wgrender-nim checkout>)"
   # the binding: a checkout's src/, or the package itself
   let wgrSrc = if dirExists(wgrNim / "src"): wgrNim / "src" else: wgrNim
-  let wgrNimCheckout = fileExists(wgrNim / "tools/webdeploy.py")
 
-  proc needCheckout() =
-    if not wgrNimCheckout:
-      quit "simple's web build needs a wgrender-nim checkout, for its page and tools: " &
-           "WGRENDER_NIM=<path>"
-
-  # the examples' assets: copies of wgrender's example assets, with their licenses
-  # (examples/assets/CREDITS.md)
+  # the examples' web page (examples/www/) and assets (examples/assets/), which `nim serve`
+  # serves beside a web build. The assets are copies of wgrender's example assets, with
+  # their licenses (assets/CREDITS.md)
+  const wwwDir = thisDir.parentDir / "www"
   const assetsDir = thisDir.parentDir / "assets"
 
   proc webVariant(): string =
@@ -87,31 +83,24 @@ when not declared(nimscript):
   else:
     switch("define", "wgrAssetBase=" & assetsDir)
 
-  proc python(): string =
-    if findExe("python3").len > 0: "python3" else: "python"
-
   proc buildWeb() =
-    needCheckout()
     echo "Building simple (web)..."
     let site = thisDir / "out" / webVariant()
     mkDir(site)
     exec "nim c -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
          quoteShell(target.mainModule)
-    # wgrender-nim's page opens "simple" first, which is this program's name too
-    exec python() & " " & quoteShell(wgrNim / "tools/webdeploy.py") & " " & site.quoteShell &
-         " " & quoteShell(wgrNim / "web/index.html")
-    echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open http://localhost:8000/"
+    # the assets' manifests, so the page fetches only what changed (unchanged ones stay)
+    exec "nim r --hints:off " & quoteShell(thisDir.parentDir / "tools/manifest.nim") & " " &
+         quoteShell(assetsDir)
+    echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open " &
+         "http://localhost:8000/"
 
-  # the web build is part of `nim build all` when there's a checkout to build it with
-  var extraBuilds: seq[ExtraBuild]
-  if wgrNimCheckout: extraBuilds.add ("web", buildWeb)
-  hotReloadTasks(target, extraBuilds)
+  hotReloadTasks(target, [("web", buildWeb)])
 
   task web, "Build for the web, simple.nim compiled in":
     buildWeb()
 
-  task serve, "Serve the web build on http://localhost:8000":
-    needCheckout()
-    exec python() & " " & quoteShell(wgrNim / "tools/serve.py") & " 8000 " &
-         quoteShell(thisDir / "out" / webVariant()) & " --assets " &
-         quoteShell(assetsDir) & " --gzip"
+  task serve, "Serve the web build and the examples' page on http://localhost:8000":
+    withDir thisDir.parentDir / "tools":
+      exec "nim r --hints:off serve.nim 8000 " & quoteShell(thisDir / "out" / webVariant()) &
+           " " & quoteShell(wwwDir) & " " & quoteShell("/assets=" & assetsDir)

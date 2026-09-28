@@ -1,0 +1,12 @@
+{
+ "dirs": {
+  "fonts": "sha256:950915053ee6ca77d48b97272f83e7ef60f51618c203313baaae8a02ab9250d5",
+  "models": "sha256:b130095207ea606d91cb660f02c0523e554a72427e663a2cf428fc540fb07e81",
+  "music": "sha256:2bc366e7e043eb6d29d8549a5e9932eac103c97409d5cdea3e3b27760dd79dbe",
+  "sprites": "sha256:84176100975e3dbafa3892ba1f7be74c626561d9bce0e3975e2f07b26ed03a20"
+ },
+ "files": {
+  "CREDITS.md": "sha256:1856697c2a7a5f7b0bf67d3d72ee5243880827c98f1a6abb5a9a4da6a2248c78"
+ },
+ "wgr_manifest": 1
+}

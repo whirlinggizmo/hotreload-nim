@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hotreload's simple example</title>
+<!-- The examples' web page: `nim serve` in examples/simple serves it with that
+     example's web build (simple.js and simple.wasm, from `nim web`) and the examples'
+     assets (examples/assets/) at assets/, which the program loads from. -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  #canvas { width: 100vw; height: 100vh; display: block; outline: none;
+    touch-action: none; }
+</style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+  <script>
+    var Module = {
+      canvas: document.getElementById("canvas"),
+      print: (...a) => console.log(...a),
+      // everything wgrender logs arrives here, whatever its level: sort it by level
+      printErr: (...a) => {
+        const text = a.join(" ");
+        if (/\[(ERROR|FATAL)/.test(text)) console.error(text);
+        else if (/\[WARN/.test(text)) console.warn(text);
+        else console.log(text);
+      },
+    };
+  </script>
+  <script src="simple.js"></script>
+</body>
+</html>
