@@ -2,44 +2,33 @@
 ## changes, as a shared library, in the background, and swapped in, without stopping.
 ## Nothing here knows what the program is.
 ##
-## A program that hot reloads is two parts: the program itself, its main module, which
-## sets things up and runs the loop (and calls into the code), and the code, a module the
-## main module imports (and what that imports). Only the code is rebuilt; a change to the
-## main module takes a restart. Built any other way (debug, release, web), the two are
-## one ordinary program.
+## A program that hot reloads is two parts: the program, its main module, which sets
+## things up, runs the loop and calls into the code; and the code, a module the main
+## module imports, with everything that imports. Each reload builds all of the code into
+## one library; a change to the main module takes a restart. Built any other way (debug,
+## release, web), the two are one ordinary program.
 ##
 ##   # main.nim: the program
 ##   import hotreload, game
 ##   let reloader = newReloader()
-##   reloader.afterReload = proc () = onLoad(reloaded = true)
 ##   while running:
 ##     reloader.update()   # rebuilds and swaps when a source changed
 ##     onFrame(dt)         # the latest onFrame
 ##
 ##   # game.nim: the code
 ##   import hotreload
-##   var score {.hot.} = 0                        # kept across reloads
-##   proc onFrame*(dt: float) {.hot.} = ...       # the program's calls get the latest
-##   proc fixUp() {.afterHotReload.} = ...        # run after each reload
+##   var score {.hot.} = 0                    # kept across reloads (hotglobals.nim)
+##   proc onFrame*(dt: float) {.hot.} = ...   # the program's calls follow reloads
+##   proc fixUp() {.afterHotReload.} = ...    # run after each reload (hotprocs.nim)
 ##
-## {.hot.} on a proc marks one the program calls: in a hot build (-d:hotReload) the
-## program's calls go to the latest library's version (hotprocs.nim). The rest of the
-## code needs nothing: it's all in the new library, which is the code module and all it
-## imports, built as one, whichever of them changed. {.beforeHotReload.} and
-## {.afterHotReload.} are the code's own reload hooks, at most one of each per module.
-##
-## What the code keeps between calls lives in hot globals, `var x {.hot.}: T`
-## (hotglobals.nim): kept across reloads, and carried over when a reload changes their
-## type. The code's plain globals start over with each reload.
+## A reload whose code changed the signature of a hot proc (its parameters or result) is
+## refused: the program would call it the old way. Restart to run it.
 ##
 ## A replaced library stays loaded, so a callback its code handed out keeps working, but
 ## runs the code it came from: fine for a one-off (an asset arriving), not for one that
 ## keeps firing (a frame callback), which the program registers and points at a hot
 ## proc. If a reload has moved a hot global to new storage since the callback was made,
 ## what it writes there is lost: `hotMoves()` tells it.
-##
-## A reload whose code changed a hot proc's signature (its parameters or result) is
-## refused: the program would call it the old way. Restart to run it.
 
 import std/macros
 import ./hotglobals

@@ -91,8 +91,8 @@ proc onTick*() {.hot.} =
 Three pragmas, all in the code:
 
 - **`{.hot.}` on a global** keeps it across reloads. When a reload changes its type, what
-  still fits is carried over and the rest starts from its default. Its first value is
-  used once, when it's made: to change a kept value, assign it.
+  still fits is carried over and the rest starts from the first value. That first value
+  is used once, when it's made: to change a kept value, assign it.
 - **`{.hot.}` on a proc** marks one the program calls. The program is compiled once, so
   its calls would otherwise reach the version it was built with; these follow each
   reload. Only the procs the program calls need it: everything else in the code is

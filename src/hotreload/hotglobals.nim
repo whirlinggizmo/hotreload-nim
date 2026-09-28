@@ -2,9 +2,9 @@
 ## `var speed {.hot.} = 1.0`. In a hot build the program keeps each one, by its module (its
 ## path from the code's directory: `player/state.speed`) and name, and every library that
 ## loads is handed the one that's there: its first value is used once, when it's first
-## made. When a reload changes its type, what still fits is
-## carried over (migrate.nim) and the rest starts from the first value. Everywhere else
-## (debug, release, web) it's an ordinary global.
+## made. When a reload changes its type, what still fits is carried over (migrate.nim)
+## and the rest starts from the first value. Everywhere else (debug, release, web) it's an
+## ordinary global.
 ##
 ## A type change is found from the type itself (typeSig): fields, their types, and the
 ## types inside those, not the source, so a comment or a proc next to it changes nothing.

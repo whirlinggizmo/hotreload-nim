@@ -3,7 +3,7 @@
 #
 #   import "../../src/hotreload/tasks.nims"  # a literal path: NimScript won't take another
 #
-#   let target = BuildTarget(dir: thisDir, name: "simple")
+#   let target = BuildTarget(dir: thisDir(), name: "hello")
 #   hotReloadConfig(target)                  # first: what follows can add to it or override
 #   ...                                      # the program's own switches
 #   hotReloadTasks(target)                   # or hotReloadTasks(target, [("web", buildWeb)])
@@ -11,8 +11,8 @@
 # The program's main module is src/main.nim, and the code it hot reloads src/<name>.nim
 # (BuildTarget's main and code say otherwise).
 #
-# The variants, each in the wg* layout: what a build makes in out/<platform>/<variant>/,
-# its work (Nim's cache) in build/<platform>/<variant>/:
+# The variants, each making what it makes in out/<platform>/<variant>/ and keeping its
+# work (Nim's cache) in build/<platform>/<variant>/:
 #
 #   hot       -d:hotReload, a debug build that rebuilds its code as a library when a source
 #             changes (-d:hotReloadLibrary, into build/<platform>/hot/library/) and swaps

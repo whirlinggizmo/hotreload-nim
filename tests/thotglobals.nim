@@ -10,7 +10,7 @@ type
     next: Node
 
 template slot(key: string; T: typedesc): ptr T =
-  ## what a library's `var x {.hot.}: T` asks the host for, as one loading after another
+  ## what a library's `var x {.hot.}: T` asks the program for, as one loading after another
   cast[ptr T](hotSlot(key, hash(typeSig(T)), holdsRefs(T),
     proc (): pointer {.cdecl.} = create(T),
     proc (p: pointer): string {.cdecl.} = save(result, (value: cast[ptr T](p)[])),

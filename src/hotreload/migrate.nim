@@ -6,10 +6,10 @@
 ## A kind is what a value is made of: an object, a tuple, a seq or an array matches another
 ## of its sort, whatever its type is called or holds, and what's inside is matched the same
 ## way, field by field or element by element (an array keeps what fits). A ref matches a
-## ref to the same kind. Anything else matches by its type's name: an int is not a float, a
-## Font is not a Model.
+## ref to the same kind. Anything else matches by its type's name: an int is not a float,
+## a Meters is not a Seconds.
 ##
-## Numbers, bools, chars, enums, sets, distinct types of those (wgrender's handles),
+## Numbers, bools, chars, enums, sets, distinct types of those (handles, ids, units),
 ## strings, refs, and seqs, arrays, objects and tuples of them. Refs are copied as a graph:
 ## each object once, however many refs point at it, so what was shared is shared in the
 ## copy, and a cycle stays a cycle. What a ref points at is written out apart from the

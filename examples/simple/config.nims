@@ -60,7 +60,7 @@ when not declared(nimscript):
       switch("define", "release")
       switch("clang.options.linker", "")
   elif defined(hotReloadLibrary):
-    # wgrender comes from the host that loads the code
+    # wgrender comes from the program that loads the code
     switch("define", "wgrDeclarationsOnly")
   else:
     switch("define", "wgrAssetBase=" & wgrenderDir / "examples/assets")
