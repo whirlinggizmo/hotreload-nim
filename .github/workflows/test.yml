@@ -1,10 +1,13 @@
 # nimble test on each platform, for each push and pull request. Linux and Windows must
-# pass; macOS isn't supported yet, so its failures don't fail the run.
+# pass; macOS isn't supported yet, so its failures don't fail the run. A change to only
+# the docs, the license or editor settings doesn't run it.
 name: test
 
 on:
   push:
+    paths-ignore: ['**.md', 'LICENSE', '.vscode/**']
   pull_request:
+    paths-ignore: ['**.md', 'LICENSE', '.vscode/**']
 
 jobs:
   test:
