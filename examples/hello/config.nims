@@ -15,7 +15,7 @@ when not declared(nimscript):
   proc build(variant, flags: string) =
     ## builds and runs src/main.nim: out/<os>/<variant>/hello, its Nim cache in build/
     withDir thisDir():
-      exec "nim c -r --hints:off " & flags & " --nimcache:build/" & hostOS & "/" & variant &
+      selfExec "c -r --hints:off " & flags & " --nimcache:build/" & hostOS & "/" & variant &
            " --out:out/" & hostOS & "/" & variant & "/hello src/main.nim"
 
   task hot, "Build and run with hot reload: edit src/hello.nim while it runs":

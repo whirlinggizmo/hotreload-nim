@@ -41,9 +41,14 @@ when not declared(nimscript):
   let wgrNim =
     if getEnv("WGRENDER_NIM").len > 0: getEnv("WGRENDER_NIM")
     else: installedWgrender()
-  if wgrNim.len == 0 and getCommand() in ["c", "compile"]:
-    quit "simple needs wgrender: nimble install https://github.com/whirlinggizmo/wgrender-nim " &
-         "(or WGRENDER_NIM=<a wgrender-nim checkout>)"
+  proc needWgrender() =
+    ## quits, saying how to get wgrender, when there's none: before a task starts a
+    ## build, so the task doesn't fail on it, and in a build started some other way
+    if wgrNim.len == 0:
+      {.hint[QuitCalled]: off.}
+      quit "simple needs wgrender: nimble install https://github.com/whirlinggizmo/wgrender-nim " &
+           "(or WGRENDER_NIM=<a wgrender-nim checkout>)", 1
+  if getCommand() in ["c", "compile"]: needWgrender()
   # the binding: a checkout's src/, or the package itself
   let wgrSrc = if dirExists(wgrNim / "src"): wgrNim / "src" else: wgrNim
 
@@ -83,13 +88,14 @@ when not declared(nimscript):
     switch("define", "wgrAssetBase=" & assetsDir)
 
   proc buildWeb() =
+    needWgrender()
     echo "Building simple (web)..."
     let site = thisDir / "out" / webVariant()
     mkDir(site)
-    exec "nim c --hints:off -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
+    selfExec "c --hints:off -d:emscripten --out:" & quoteShell(site / "simple.js") & " " &
          quoteShell(mainModule)
     # the assets' manifests, so the page fetches only what changed (unchanged ones stay)
-    exec "nim r --hints:off " & quoteShell(thisDir.parentDir / "tools/manifest.nim") & " " &
+    selfExec "r --hints:off " & quoteShell(thisDir.parentDir / "tools/manifest.nim") & " " &
          quoteShell(assetsDir)
     echo "built " & relativePath(site, thisDir) & " — `nim serve`, then open " &
          "http://localhost:8000/"
@@ -100,11 +106,12 @@ when not declared(nimscript):
 
   proc build(variant: string; run = true) =
     ## builds src/main.nim, and runs it: out/<os>/<variant>/simple, its Nim cache in build/
+    needWgrender()
     var flags = ""
     for (name, f) in variants:
       if name == variant: flags = f
     let variantDir = hostOS & "/" & variant
-    exec "nim c " & (if run: "-r " else: "") & "--hints:off " & flags & " --nimcache:" &
+    selfExec "c " & (if run: "-r " else: "") & "--hints:off " & flags & " --nimcache:" &
          quoteShell(thisDir / "build" / variantDir) & " --out:" &
          quoteShell(thisDir / "out" / variantDir / "simple") & " " & quoteShell(mainModule)
 
@@ -132,5 +139,5 @@ when not declared(nimscript):
 
   task serve, "Serve the web build and the examples' page on http://localhost:8000":
     withDir thisDir.parentDir / "tools":
-      exec "nim r --hints:off serve.nim 8000 " & quoteShell(thisDir / "out" / webVariant()) &
+      selfExec "r --hints:off serve.nim 8000 " & quoteShell(thisDir / "out" / webVariant()) &
            " " & quoteShell(wwwDir) & " " & quoteShell("/assets=" & assetsDir)
