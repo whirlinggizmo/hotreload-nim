@@ -286,11 +286,18 @@ Each reload is a new library (`libgame_1.so`, `libgame_2.so`, ...; `.dll` on Win
 globals, so each library gets the same ones. Each library has its own Nim runtime, so a
 hot global that holds refs is copied for the new library on every reload.
 
+A library's file is deleted as soon as it's loaded (a loaded library doesn't need it), so
+however the program stops, even by Ctrl-C, which runs no exit procs, none is left behind.
+Windows won't delete a loaded DLL, so there the next run's `newReloader` deletes them.
+
 ## Limits
 
 - On Windows, only MinGW's gcc works, not MSVC. The library links against the hot
   executable's import library, which MinGW's linker makes.
-- Old libraries, and the old copies of hot globals whose type changed, aren't freed.
+- Old libraries, and the old copies of hot globals (those whose type changed, and those
+  that hold refs, on every reload), aren't freed: old code may still run. Memory grows with
+  each reload, about 0.2 MB in `examples/simple`, plus a copy of any hot state held in refs.
+  A restart gives it all back.
 - Breakpoints go stale after a reload shifts lines. The debug build doesn't reload, so
   use it when you need reliable breakpoints.
 - A change to the main module, to a module only it imports, or to a `{.hot.}` proc's

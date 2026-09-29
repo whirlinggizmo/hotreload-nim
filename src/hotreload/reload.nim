@@ -151,6 +151,11 @@ when defined(hotReload):
       if hotReloadBuildDir.len > 0: hotReloadBuildDir
       else: program.parentDir.parentDir / "build" / hostOS / "hot" / "library"
     createDir(result.buildDir)
+    # the libraries an earlier run left: on Windows each is left until now (a loaded DLL
+    # can't be deleted), elsewhere only one it was building when it stopped
+    for path in walkFiles(result.buildDir / "lib" & result.name & "_*" & libExt):
+      try: removeFile(path)
+      except OSError: discard
     if modules.len == 0:
       echo "hotreload: nothing to reload: no module has {.hot.} globals or procs, or " &
            "reload hooks"
@@ -214,10 +219,19 @@ when defined(hotReload):
     r.build = startProcess(nim, r.program.parentDir, args,
                            options = {poUsePath, poParentStreams})
 
+  proc removeLibrary(path: string) =
+    ## a library's file, once it's loaded or refused: however the program stops (Ctrl-C runs
+    ## no exit procs), no library is left behind. A loaded library stays mapped without it,
+    ## except on Windows, which won't delete a loaded DLL: there newReloader clears them
+    try: removeFile(path)
+    except OSError: discard
+
   proc swap(r: Reloader) =
     let (lib, error) = openLib(r.building)
+    when not defined(windows): removeLibrary(r.building)
     if lib == nil:
       echo "hotreload: can't load " & r.building & ": " & error
+      removeLibrary(r.building)
       return
     # Before any of the new code runs (its NimMain would carry hot globals over): the
     # main module calls each hot proc the way it was compiled to
@@ -231,6 +245,7 @@ when defined(hotReload):
       echo "hotreload: " & changed.join(", ") & (if changed.len == 1: "'s" else: "'") &
            " signature changed: restart to run the new code (the last still runs)"
       unloadLib(lib)
+      removeLibrary(r.building)
       return
     runHooks(hookBefore)  # the old code's
     if r.beforeReload != nil: r.beforeReload()
@@ -259,7 +274,9 @@ when defined(hotReload):
         r.build.close()
         r.build = nil
         if code == 0: r.swap()
-        else: echo "hotreload: build failed; still running the last one"
+        else:
+          echo "hotreload: build failed; still running the last one"
+          removeLibrary(r.building)
         if r.changedSince:
           r.changedSince = false
           r.startBuild()
