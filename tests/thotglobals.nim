@@ -10,12 +10,14 @@ type
 
 template slot(key: string; T: typedesc): ptr T =
   ## what a library's `var x {.hot.}: T` asks the program for, as one loading after another
+  ## (each a library of its own, with its own table of copies)
+  forgetCopies()
   cast[ptr T](hotSlot(key, hash(typeSig(T)), holdsRefs(T),
     proc (): pointer {.cdecl.} = create(T),
     proc (p: pointer): string {.cdecl.} = save(result, (value: cast[ptr T](p)[])),
-    proc (p: pointer; data: string) {.cdecl.} =
+    proc (p: pointer; data: string): string {.cdecl.} =
       var v = (value: move(cast[ptr T](p)[]))
-      load(data, v)
+      result = loadLost(data, v)
       cast[ptr T](p)[] = move(v.value),
     proc (old: pointer): pointer {.cdecl.} =
       let p = create(T)

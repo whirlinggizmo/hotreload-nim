@@ -145,10 +145,21 @@ type Enemy = object
   shield: int = 10     # new: starts at 10
 ```
 
-That works for objects, tuples, seqs, arrays and refs. Refs are copied as a graph, so
-shared objects stay shared and cycles stay cycles, within one hot global. Note that a hot
-global can't hold pointers, closures, or refs to objects that inherit. See Limits for two
-cases that don't carry over yet: refs shared between two hot globals, and enums.
+That works for objects, tuples, seqs, arrays and refs. Refs are copied as a graph, across
+all the hot globals at once, so shared objects stay shared, even between two globals, and
+cycles stay cycles. An enum is carried by its member's name, so members can be added or
+reordered; a value whose member is gone starts from the first value. Note that a hot global
+can't hold pointers, closures, or refs to objects that inherit.
+
+The reload says what didn't carry over:
+
+```
+hotreload: game.hero's type changed; carried over what still fits (dropped hp; reset speed)
+```
+
+A field that's gone is dropped; one whose kind changed (an int that's now a float) is
+reset to its default. A field inside what a ref points at is named by the ref's type
+(`Enemy.shield`), and one inside a seq's elements by the seq (`enemies[].shield`).
 
 ### Procs the main module calls
 
@@ -284,13 +295,6 @@ hot global that holds refs is copied for the new library on every reload.
   use it when you need reliable breakpoints.
 - A change to the main module, to a module only it imports, or to a `{.hot.}` proc's
   signature, requires a restart.
-- An enum in a hot global is carried by its ordinal, not its name, so a member inserted
-  anywhere but the end changes what a kept value means. Add enum members at the end.
-- Refs shared between two hot globals become separate copies after a reload (each global
-  is copied as its own graph). Keep what's shared inside one hot global, a tuple or an
-  object, until that's fixed.
-- A type change's message always says "carried over what still fits", even when the value
-  started over from its first value.
 - In the default hot build (`-Og`, `--debugger:native`), reloaded code can run slower than
   the same code before the first reload, since the library is compiled `-fPIC`. A
   `-d:release` hot build runs the same.

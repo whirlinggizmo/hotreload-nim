@@ -1,4 +1,4 @@
-import std/unittest
+import std/[strutils, unittest]
 import hotreload/migrate
 
 type
@@ -15,6 +15,8 @@ proc carry[A, B](a: A; b: var B) =
   load(s, b)
 
 suite "values":
+  setup: forgetCopies()
+
   test "fields by name; a gone one dropped, a new one kept at its default":
     type
       A = object
@@ -62,6 +64,8 @@ suite "values":
     check int32(b.h) == 5
 
 suite "refs":
+  setup: forgetCopies()
+
   test "shared stays shared, a cycle stays a cycle":
     type R = object
       all: seq[Node]
@@ -131,6 +135,136 @@ suite "refs":
     check c.plain[0].x == 3
     r.ring.next.next = nil
     c.ring.next.next = nil
+
+# Two builds of one enum: types named alike, in procs of their own, as in two libraries
+proc oldColor(c: string): string =
+  type Color = enum Red, Green, Blue
+  var s = ""
+  save(s, (value: parseEnum[Color](c)))
+  s
+
+proc newColor(data: string; lost: var seq[string]): string =
+  type Color = enum Black, Red, Blue, White # Black added first, Green gone
+  var v = (value: White)
+  load(data, v, lost)
+  $v.value
+
+proc oldColors(): string =
+  type Color = enum Red, Green, Blue
+  var s = ""
+  save(s, (value: {Green, Blue}))
+  s
+
+proc newColors(data: string; lost: var seq[string]): string =
+  type Color = enum Black, Red, Blue
+  var v = (value: {Black})
+  load(data, v, lost)
+  $v.value
+
+proc oldLevel(): string =
+  type Level = enum Low = 1, High = 10 # numbers with holes
+  var s = ""
+  save(s, (value: High))
+  s
+
+proc newLevel(data: string): string =
+  type Level = enum Low = 1, Mid = 5, High = 20
+  var v = (value: Low)
+  load(data, v)
+  $v.value
+
+suite "enums":
+  setup: forgetCopies()
+
+  test "by member name, not number: a member added first changes nothing":
+    var lost: seq[string]
+    check newColor(oldColor("Blue"), lost) == "Blue" and lost.len == 0
+
+  test "a member that's gone keeps the first value, and is reported":
+    var lost: seq[string]
+    check newColor(oldColor("Green"), lost) == "White"
+    check lost == @["reset value"]
+
+  test "an enum with holes in its numbers":
+    check newLevel(oldLevel()) == "High"
+
+  test "a set: the members still there, by name":
+    var lost: seq[string]
+    check newColors(oldColors(), lost) == "{Blue}"
+    check lost == @["reset value"]
+
+type Pair = ref object
+  name: string
+  other: Pair
+
+suite "shared between values":
+  setup: forgetCopies()
+
+  test "load: what two values share is shared in their copies":
+    var a = Pair(name: "a")
+    var b = Pair(name: "b", other: a)
+    a.other = b
+    var sa, sb = ""
+    save(sa, a)
+    save(sb, b)
+    var ca, cb: Pair
+    load(sa, ca)
+    load(sb, cb)
+    check ca != a and ca.other == cb and cb.other == ca
+    a.other = nil
+    ca.other = nil
+
+  test "copy: the same, and copy and load together":
+    var a = Pair(name: "a")
+    var b = Pair(name: "b", other: a)
+    a.other = b
+    var ca, cb: Pair
+    copy(ca, addr a)
+    var sb = ""
+    save(sb, b)
+    load(sb, cb)
+    check ca.other == cb and cb.other == ca and cb.name == "b"
+    a.other = nil
+    ca.other = nil
+
+suite "what didn't carry over":
+  setup: forgetCopies()
+
+  test "dropped and reset fields, by path":
+    type
+      E1 = object
+        hp: int
+        speed: int
+      E2 = object
+        health: int
+        speed: float
+      A = object
+        enemies: seq[E1]
+        score: int
+      B = object
+        enemies: seq[E2]
+        score: int
+    var s = ""
+    save(s, A(enemies: @[E1(hp: 3, speed: 2), E1(hp: 4, speed: 1)], score: 9))
+    var b: B
+    var lost: seq[string]
+    load(s, b, lost)
+    check b.score == 9 and b.enemies.len == 2
+    check lost == @["reset enemies[].speed", "dropped enemies[].hp"]
+
+  test "all of it carried: nothing reported":
+    type
+      A = object
+        n: int
+      B = object
+        n: int
+        added: string
+    var s = ""
+    save(s, A(n: 1))
+    var b: B
+    var lost: seq[string]
+    load(s, b, lost)
+    check b.n == 1 and lost.len == 0
 
 suite "refused":
   test "pointers, closures, and refs to objects that inherit":

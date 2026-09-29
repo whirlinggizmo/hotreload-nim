@@ -64,8 +64,15 @@ when defined(hotReload) or defined(hotReloadLibrary):
   type
     HotMake = proc (): pointer {.cdecl.}
     HotSave = proc (p: pointer): string {.cdecl.}
-    HotLoad = proc (p: pointer; data: string) {.cdecl.}
+    HotLoad = proc (p: pointer; data: string): string {.cdecl.}
+      ## what didn't carry over: `load`'s `lost`, one per line
     HotCopy = proc (old: pointer): pointer {.cdecl.}
+
+  proc loadLost*[T](data: string; x: var T): string =
+    ## `load`, and what didn't carry over, one per line (a hot global's HotLoad)
+    var lost: seq[string]
+    load(data, x, lost)
+    lost.join("\n")
 
 when defined(hotReloadLibrary):
   # the executable's, which it exports (-rdynamic; on Windows, its import library)
@@ -92,6 +99,27 @@ elif defined(hotReload):
 
   proc hotreloadMoves(): int {.exportc: "hotreload_moves", cdecl, dynlib.} = moves
 
+  proc typeChanged(key, lost: string): string =
+    ## what a reload that changed a hot global's type says, from what didn't carry over.
+    ## The global is carried as the field `value` of a tuple, so its paths start there
+    var dropped, reset: seq[string]
+    for line in lost.splitLines:
+      if line.len == 0: continue
+      let what = line.split(' ', 1)[0]
+      var at = if ' ' in line: line.split(' ', 1)[1] else: ""
+      at.removePrefix("value")
+      at.removePrefix(".")
+      if at.len == 0:
+        return key & "'s type changed; started over from its first value"
+      if what == "dropped": dropped.add at
+      else: reset.add at
+    if dropped.len == 0 and reset.len == 0:
+      return key & "'s type changed; carried all of it over"
+    var parts: seq[string]
+    if dropped.len > 0: parts.add "dropped " & dropped.join(", ")
+    if reset.len > 0: parts.add "reset " & reset.join(", ")
+    key & "'s type changed; carried over what still fits (" & parts.join("; ") & ")"
+
   proc hotMoves*(): int = moves
     ## how many times a hot global has moved to new storage (see the library build's)
 
@@ -107,10 +135,10 @@ elif defined(hotReload):
     elif hotSlots[k].stamp != stamp:
       let old = hotSlots[k]
       let data = make()
-      load(data, old.save(old.data))
+      let lost = load(data, old.save(old.data))
       hotSlots[k] = HotSlot(stamp: stamp, data: data, save: save)
       inc moves
-      echo "hotreload: " & k & "'s type changed; carried over what still fits"
+      echo "hotreload: " & typeChanged(k, lost)
     elif refs:
       hotSlots[k] = HotSlot(stamp: stamp, data: copy(hotSlots[k].data), save: save)
       inc moves
@@ -158,7 +186,7 @@ macro hotGlobal*(def: untyped): untyped =
       let typeSigSym = bindSym"typeSig"
       let holdsRefsSym = bindSym"holdsRefs"
       let saveSym = bindSym"save"
-      let loadSym = bindSym"load"
+      let loadSym = bindSym"loadLost"
       let copySym = bindSym"copy"
       let slotProc = bindSym"hotSlot"
       # the value goes in and out as a field, so a type change at the top is seen too
@@ -171,9 +199,9 @@ macro hotGlobal*(def: untyped): untyped =
             p,
           proc (p: pointer): string {.cdecl.} =
             `saveSym`(result, (value: cast[ptr `typ`](p)[])),
-          proc (p: pointer; data: string) {.cdecl.} =
+          proc (p: pointer; data: string): string {.cdecl.} =
             var v = (value: move(cast[ptr `typ`](p)[]))
-            `loadSym`(data, v)
+            result = `loadSym`(data, v)
             cast[ptr `typ`](p)[] = move(v.value),
           proc (old: pointer): pointer {.cdecl.} =
             let p = create(`typ`)
