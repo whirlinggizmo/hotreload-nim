@@ -146,8 +146,9 @@ type Enemy = object
 ```
 
 That works for objects, tuples, seqs, arrays and refs. Refs are copied as a graph, so
-shared objects stay shared and cycles stay cycles. Note that a hot global can't hold
-pointers, closures, or refs to objects that inherit.
+shared objects stay shared and cycles stay cycles, within one hot global. Note that a hot
+global can't hold pointers, closures, or refs to objects that inherit. See Limits for two
+cases that don't carry over yet: refs shared between two hot globals, and enums.
 
 ### Procs the main module calls
 
@@ -203,7 +204,8 @@ module's `afterReload`.
 A replaced library stays loaded, so a callback that its code handed out before a reload
 (to an asset loader, say) still works when it fires. Note that it runs the code it came
 from, not the new code, and that if a reload has moved a hot global to new storage since
-the callback was made (its type changed), what the callback writes there is lost.
+the callback was made (its type changed, or it holds refs: those are copied on every
+reload), what the callback writes there is lost.
 `hotMoves()` counts those moves, so a callback can tell:
 
 ```nim
@@ -282,6 +284,19 @@ hot global that holds refs is copied for the new library on every reload.
   use it when you need reliable breakpoints.
 - A change to the main module, to a module only it imports, or to a `{.hot.}` proc's
   signature, requires a restart.
+- An enum in a hot global is carried by its ordinal, not its name, so a member inserted
+  anywhere but the end changes what a kept value means. Add enum members at the end.
+- Refs shared between two hot globals become separate copies after a reload (each global
+  is copied as its own graph). Keep what's shared inside one hot global, a tuple or an
+  object, until that's fixed.
+- A type change's message always says "carried over what still fits", even when the value
+  started over from its first value.
+- In the default hot build (`-Og`, `--debugger:native`), reloaded code can run slower than
+  the same code before the first reload, since the library is compiled `-fPIC`. A
+  `-d:release` hot build runs the same.
+
+[docs/comparison.md](docs/comparison.md) compares hotreload-nim with its Haxe side,
+hotreload-hx: reload times, the speed of reloaded code, and what each can and can't do.
 
 ## The repo
 
@@ -294,6 +309,7 @@ src/hotreload/
   hotprocs.nim           hot procs, and the {.beforeHotReload.} / {.afterHotReload.} hooks
   migrate.nim            carrying a value from one build's type to another's
   typesig.nim            a type's shape, to tell when it changed
+docs/comparison.md       hotreload-nim and hotreload-hx, measured side by side
 tests/                   `nimble test`: the modules' tests, and treload.nim, a smoke test
                          that builds tests/reload/ hot, runs it and edits it while it runs
 examples/hello/          a console application: src/main.nim, its main module, and
