@@ -1,0 +1,5 @@
+# what run.sh writes: the scenario's current sources, the builds, and the logs
+src/
+out/
+build/
+logs/

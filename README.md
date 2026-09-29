@@ -312,6 +312,7 @@ src/hotreload/
 docs/comparison.md       hotreload-nim and hotreload-hx, measured side by side
 tests/                   `nimble test`: the modules' tests, and treload.nim, a smoke test
                          that builds tests/reload/ hot, runs it and edits it while it runs
+tests/matrix/            the capability matrix behind docs/comparison.md
 examples/hello/          a console application: src/main.nim, its main module, and
                          src/hello.nim, which is reloaded
 examples/simple/         an application with a window (wgrender), with a web build too
