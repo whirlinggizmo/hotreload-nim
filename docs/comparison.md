@@ -78,7 +78,7 @@ saved as editors save them: a temporary file, then a rename. The test programs a
 
 | Program | What it measured |
 | --- | --- |
-| wgrender's `simple` example (`examples/simple` in each repo), a window at 60 fps | save-to-reload time, build size and time |
+| wgrender's `simple` example (`examples/simple` in each repo then; hotreload-hx's was removed on 2026-10-16, so that its examples need nothing else), a window at 60 fps | save-to-reload time, build size and time |
 | A console test program per library | what each can and can't do (S1–S18) |
 | A timed loop in a hot function | the speed of reloaded code |
 
@@ -118,7 +118,6 @@ code's first output; a save adds the reloader's 0.3–0.5 s wait for the file to
 | hxcpp, only the hot class reloaded, the rest in the executable | 0.02–0.04 s | 0.06–0.08 s | 0.2–0.3 s |
 | JS: the hot class | 0.05 s | 0.23 s | 0.8 s |
 | Nim: any edit | 0.9 s | 16.6–17.3 s | 167–201 s |
-| Nim to JS, compile only (no reloader): any edit | 0.37–0.38 s | 3.8–3.9 s | 33–39 s |
 
 A full hot build took 7 s, 59 s and about 155 s on hxcpp (the C++ compile), 0.3, 1.3 and
 5.0 s on JS, and 1.3, 17.5 and 168 s with Nim.
@@ -130,17 +129,6 @@ builds through its compilation server, which re-types only the changed files and
 depends on them, and its reloads grow about linearly with what's in the module. With the
 big part of the program compiled into the executable and only the hot classes in the
 module, a reload barely grows at all.
-
-**Nim to JS** was measured 2026-10-03 with Nim 2.2.12, on the same generated Nim program
-with hotreload's pragmas taken out (`import hotreload` doesn't compile for JS yet:
-migrate.nim uses `copyMem`), and a main module that calls `tick()`, so the whole chain is
-reachable. hotreload-nim has no JS reloader, so the times are `nim js` alone. A cold
-build, a rebuild with no change, an edit to `game.nim` and an edit to the last class all
-took the same time: `nim js` has no incremental mode either, and its Nim cache doesn't
-help. It's 2.5–5× faster than the native build, since there's no C compile or link, but
-it grows faster than the program as well (9× for 3× the modules), and at 1,000 classes
-and up it's slower than a full Haxe JS build. Loading and swapping in the new code would
-come on top.
 
 **Editing a class everything depends on** (C(N-1), at the end of the chain) hit a bug in
 the Haxe compilation server: 11 s at 1,000 classes and about 290 s at 3,000, the same on
@@ -249,4 +237,4 @@ directory, and a refused library still uses up its version number.
 | Per-frame work at scale: physics, per-entity updates, tight loops | hotreload-nim | Reloaded code runs natively, the same as the shipped build in a release hot build |
 | Engine-side, or calling C functions the executable doesn't already use | hotreload-nim | Reloaded Haxe code can only reach native code the executable already compiled |
 | Something you want to step through in a debugger while editing it | hotreload-hx | Its breakpoints survive a reload; Nim's go stale |
-| Game code that can run as a web guest (wgrender-hx's JS target) | hotreload-hx, JS | The fastest reloads, reloaded code at full speed, the most kinds of change, and nothing to mark |
+| Game code that can run in a browser (a JS build, as HeliX's browser target is) | hotreload-hx, JS | The fastest reloads, reloaded code at full speed, the most kinds of change, and nothing to mark |
